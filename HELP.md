@@ -247,7 +247,8 @@ alone and never closed; reap them from there. Requires cmux or ArcaTerm; skipped
   The pane closes itself a few seconds after the last teammate reaches `finished`, so a
   completed run does not leave a pane behind (`TEAM_MONITOR_AUTOCLOSE=0` keeps it open,
   `TEAM_MONITOR_CLOSE_GRACE` sets the delay). It only closes on that *transition*: opening
-  the monitor on an already-finished run leaves it up.
+  the monitor on an already-finished run leaves it up. On a ticket run it stays open even
+  when every implementer is finished, since the next slices follow; shutting down closes it.
   The headline bar is the team's **average** self-reported progress (`~70%`), not the share
   of teammates that have reported — 4 teammates at 80% is not "0% done". A reported or
   finished teammate counts as 100. The hard `N/M reported` count stays next to it, and when

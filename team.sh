@@ -5,8 +5,8 @@
 #                         in its recorded cwd, with <prompt-file> as the new instruction; exit 3 when no session
 #                         is recorded or its dir is gone (then spawn without --resume)
 #   team.sh close <team>  -> force-closes every recorded pane/tab (incl. the monitor) whose live title still matches
-#                            its row (a reused ref is skipped, row dropped) and drops finished rows (the team is over);
-#                            exit 1 (rows kept for a retry) if one could not be closed
+#                            its row (a reused ref is skipped, row dropped) and drops finished rows (the team is over),
+#                            with the team's ticket-run record; exit 1 (rows kept for a retry) if one could not be closed
 #   team.sh init <team>   -> creates .team/ (idempotent) + a run dir; prints the run dir path
 #   team.sh lead-title    -> renames the lead's cmux workspace and tab (ArcaTerm: its tab) to "Main Board - <project>"
 #                            (project = basename of the main checkout); idempotent; a no-op inside a teammate
@@ -412,11 +412,12 @@ _close_browsers() {
 # its pane is gone on purpose, and it is the only record of the session id to resume.
 _reg_prune() {
   [ -f "$1" ] || return 0
-  local keep="" row b r
+  local keep="" row b r title
   while IFS= read -r row; do
-    read -r b r _ <<<"$row" || true
+    read -r b r _ title _ <<<"$row" || true
     [ -n "${r:-}" ] || continue
-    if _finished "$row" || _alive "$b" "$r"; then keep+="$row"$'\n'; fi
+    if _finished "$row" || _alive "$b" "$r"; then keep+="$row"$'\n'
+    else rm -f "$(_reg_dir)/team-${title:-?}.launch.sh"; fi   # its ArcaTerm launcher goes with it
   done < "$1"
   printf '%s' "$keep" > "$1.tmp" && mv "$1.tmp" "$1"
 }

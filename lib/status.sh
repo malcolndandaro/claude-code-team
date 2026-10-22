@@ -798,6 +798,9 @@ sub_status() {
   # monitor opened stays open, so asking for the pane never makes it vanish.
   local autoclose=1 was_all_fin=
   [ "${TEAM_MONITOR_AUTOCLOSE:-1}" = 0 ] && autoclose=0
+  # A ticket run finishes every implementer between slices, right before the lead claims the next
+  # ones, so "all finished" is not the end there: only `close` (which removes the registry) is.
+  [ ! -f "$(dirname "$reg")/team-$team.tickets" ] || autoclose=0
 
   local prev= recs frame k
   while [ -f "$reg" ]; do

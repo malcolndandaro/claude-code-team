@@ -491,6 +491,19 @@ wait "$flip" 2>/dev/null || true
   && pass "AC3: TEAM_MONITOR_AUTOCLOSE=0 keeps the pane open after everyone finishes" \
   || fail "AC3: opt-out ignored" "exit=$rc (124 = still running, as required)"
 
+# A ticket run (its record exists) finishes every implementer between slices: the pane stays.
+printf 'cmux surface:170 pane ac-w - - %s %s live - -\n' "$RUNAC" "$G" > "$acreg"
+printf 'mode=local\nslug=f\nbranch=main\nstart=abc1234\n' > "$TEAM_REG_DIR/team-ac.tickets"
+( sleep 2; printf 'cmux surface:170 pane ac-w - - %s %s finished - -\n' "$RUNAC" "$G" > "$acreg" ) &
+flip=$!
+( cd "$G" && TEAM_REG_DIR="$TEAM_REG_DIR" TEAM_STATUS_INTERVAL=1 TEAM_MONITOR_CLOSE_GRACE=0 \
+    timeout 6 bash "$TEAM_SH" status --watch ac >/dev/null 2>&1 ); rc=$?
+wait "$flip" 2>/dev/null || true
+rm -f "$TEAM_REG_DIR/team-ac.tickets"
+[ "$rc" = 124 ] \
+  && pass "AC4: on a ticket run the monitor stays open when every implementer is finished" \
+  || fail "AC4: ticket-run monitor closed between slices" "exit=$rc (124 = still running, as required)"
+
 echo; echo "status-render: $passes passed, $fails failed"
 [ "$fails" = 0 ] || exit 1
 echo "all passed ($passes cases)"

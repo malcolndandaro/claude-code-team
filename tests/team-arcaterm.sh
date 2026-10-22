@@ -192,6 +192,14 @@ _row() { awk -v t="$2" '$4==t' "$TEAM_REG_DIR/team-$1.tabs" 2>/dev/null || true;
     || fail "A2: running the launcher starts claude with the prompt" "claude=$(cat "$CLAUDE_LOG")"
   (cd "$R" && bash "$TEAM_SH" close a2 >/dev/null 2>&1) || true
   [ ! -e "$L" ] && pass "A2: close removes the launcher" || fail "A2: close removes the launcher" "$L still there"
+  # A pane that vanished on its own (a self-closed monitor, a closed tab) is pruned at the next spawn,
+  # and its launcher goes with its row.
+  _at_reset; _mkproj "$R" sec perf
+  _spawn "$R" a2b sec "$R/run/prompts/sec.md" "$SONNET" >/dev/null || true
+  L="$TEAM_REG_DIR/team-a2b-sec.launch.sh"; _at_drop "$(_row a2b a2b-sec | awk '{print $2}')"
+  _spawn "$R" a2b perf "$R/run/prompts/perf.md" "$SONNET" >/dev/null || true
+  [ ! -e "$L" ] && [ -z "$(_row a2b a2b-sec)" ] && pass "A2: pruning a gone pane's row removes its launcher" \
+    || fail "A2: pruning a gone pane's row removes its launcher" "$L $(ls "$L" 2>/dev/null)"
 }
 
 # ═══ A3 — --tabs: a child tab that keeps focus where it was, renamed to the teammate's title ═══

@@ -85,7 +85,7 @@ When you're done, say **"shut down the team"**.
 - **Tool-permission prompts appear in each teammate's own pane** (in cmux they are a known blind spot of the status pane; ArcaTerm reports them as waiting; see `/team --help`) — teammate *questions*, by contrast, are forwarded to the lead, who relays them to you in one place.
 - **First time in a folder**, each pane shows Claude's workspace-trust prompt (folders inside a trusted project are already trusted).
 - **Build runs push nothing** (one branch per teammate for you to merge). **Ticket runs land on your branch** (local commits; GitHub mode closes each issue as its slice lands); the lead asks you to approve the queue first.
-- Tested on macOS with cmux. ArcaTerm (app 1.15.4, CLI 1.16.1) was tested live on a review run: split and `--tabs` spawns, the monitor pane, messages both ways, `list`/`status` (including `waiting`), `finish` and `close`; `reap`, `show` and `lead-title` are covered by `tests/team-arcaterm.sh` only, and build runs (`--worktree`) are not yet tested on ArcaTerm.
+- Tested on macOS with cmux. ArcaTerm (app 1.15.4, CLI 1.16.1) was tested live on a review run: split and `--tabs` spawns, the monitor pane, messages both ways, `list`/`status` (including `waiting`), `finish` and `close`; `reap`, `show` and `lead-title` are covered by `tests/team-arcaterm.sh` only, and build runs (`--worktree`) are not yet tested on ArcaTerm. A ticket run was tested live in ArcaTerm on a three-slice fixture: two Sonnet implementers in parallel, a refill once the first slice landed, one `Slice NN:` commit per ticket on `main`; the final Opus review step and GitHub-tracker mode have not been run live.
 
 ## License
 
