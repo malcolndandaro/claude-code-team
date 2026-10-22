@@ -126,16 +126,15 @@ export PATH="$W/bin:$PATH"
 mkdir -p "$W/home/.claude/team/roles"
 cat > "$W/home/.claude/settings.json" <<'JSON'
 {"modelPicker":{"options":[
-  {"model":"system.ai.claude-opus-5-5","behavesAs":"opus"},
-  {"model":"system.ai.claude-sonnet-4-6","behavesAs":"sonnet"},
-  {"model":"system.ai.claude-haiku-4-5","behavesAs":"haiku"}
+  {"model":"system.ai.claude-opus-5-5[1m]","behavesAs":"opus"},
+  {"model":"system.ai.claude-sonnet-5-5[1m]","behavesAs":"sonnet"}
 ]}}
 JSON
 echo '{"projects":{}}' > "$W/home/.claude.json"
 export HOME="$W/home" TEAM_ROLES_DIR="$W/home/.claude/team/roles" TEAM_MODELS_FILE="$W/home/.claude/settings.json"
 export TEAM_REG_DIR="$W/regs"; mkdir -p "$TEAM_REG_DIR"
 export MACTERM_SESSION=macterm-lead
-SONNET=system.ai.claude-sonnet-4-6 HAIKU=system.ai.claude-haiku-4-5
+SONNET=system.ai.claude-sonnet-5-5[1m]
 
 _git() { git -c user.email=t@t -c user.name=T "$@"; }
 _mkgit() { mkdir -p "$1"; _git -C "$1" init -q; _git -C "$1" commit -q --allow-empty -m init; }
@@ -225,14 +224,14 @@ _row() { awk -v t="$2" '$4==t' "$TEAM_REG_DIR/team-$1.tabs" 2>/dev/null || true;
   if grep -q -- '-only -->' <<<"$at$cm"; then fail "A4: fence lines never reach a teammate"; else pass "A4: fence lines never reach a teammate"; fi
 }
 
-# ═══ A5 — haiku allowlist: no `cmux notify` rule for an ArcaTerm teammate ═══
+# ═══ A5 — an ArcaTerm teammate runs in auto mode, with no allowlist and no cmux rule ═══
 {
   _at_reset; R="$W/a5"; _mkproj "$R" sweep
-  _spawn "$R" a5 sweep "$R/run/prompts/sweep.md" "$HAIKU" >/dev/null || true
+  _spawn "$R" a5 sweep "$R/run/prompts/sweep.md" "$SONNET" >/dev/null || true
   L="$TEAM_REG_DIR/team-a5-sweep.launch.sh"
-  grep -q -- "--permission-mode dontAsk" "$L" && grep -q -- "--allowedTools" "$L" && ! grep -q "cmux" "$L" \
-    && pass "A5: haiku tier keeps dontAsk + allowlist, minus the cmux notify rule" \
-    || fail "A5: haiku tier keeps dontAsk + allowlist, minus the cmux notify rule" "$(grep allowedTools "$L" 2>/dev/null)"
+  grep -q -- "--permission-mode auto" "$L" 2>/dev/null && ! grep -qE -- "dontAsk|--allowedTools|cmux" "$L" \
+    && pass "A5: the launcher starts claude in auto mode with no allowlist" \
+    || fail "A5: the launcher starts claude in auto mode with no allowlist" "$(cat "$L" 2>/dev/null)"
 }
 
 # ═══ A6 — requirements: exit 3 before anything opens; a bad TEAM_BACKEND is refused ═══
@@ -364,9 +363,6 @@ st() { awk -F'\t' -v t="$2" '$2==t {print $3 "|" $7}' <<<"$1"; }
   r=$(cd "$R" && AT_SNAPSHOT_FAIL=1 recs "$TEAM_REG_DIR/team-a12.tabs" a12)
   [ "$(awk -F'\t' '$3!="UNKNOWN"' <<<"$r" | wc -l | tr -d ' ')" = 0 ] \
     && pass "A12: an unreadable snapshot makes every row UNKNOWN, never DEAD" || fail "A12: an unreadable snapshot makes every row UNKNOWN, never DEAD" "$r"
-  awk -v OFS=' ' '$4=="a12-ask" {$5="'"$HAIKU"'"} 1' "$TEAM_REG_DIR/team-a12.tabs" > "$W/t" 2>/dev/null && mv "$W/t" "$TEAM_REG_DIR/team-a12.tabs" || true
-  r=$(cd "$R" && recs "$TEAM_REG_DIR/team-a12.tabs" a12)
-  [ "$(st "$r" a12-ask)" = "WORKING|-" ] && pass "A12: haiku tier never shows WAITING (it runs unattended)" || fail "A12: haiku tier never shows WAITING (it runs unattended)" "$(st "$r" a12-ask)"
 }
 
 # ═══ A13 — monitor: a split down from the lead via a launcher; a dash row; a second one is refused ═══

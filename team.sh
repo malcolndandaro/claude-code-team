@@ -35,8 +35,8 @@
 #   team.sh list <team>         -> each teammate: working (<pane>) / tab (in your pane, running) / finished / dead
 #                                  (cmux says not found; ArcaTerm: pane gone, or its claude session exited) / unknown
 #                                  (a row of the other terminal, or no answer); MODEL_GONE when its model left the picker
-#   team.sh models              -> models available here, best tier first
-#   team.sh pick-model <tier>   -> newest claude-* model id for opus|sonnet|haiku; exit 1 = fell back a tier
+#   team.sh models              -> models /team offers here (opus and sonnet tier only), best tier first
+#   team.sh pick-model <tier>   -> newest claude-* model id for opus|sonnet; exit 1 = fell back a tier
 #                                  (warning on stderr), 2 = bad tier, 3 = nothing matches
 #   team.sh role <name>         -> print a role spec path (project override, then shared library); exit 2 bad name, 3 if none
 #   team.sh roles               -> list roles available here: "<name>  project|user  <path>  <status>", status one of
@@ -57,8 +57,23 @@
 #   team.sh sync [--clear] <team>          -> lead sidebar status pill + progress bar and a `cmux log --source team`
 #                                             event; --clear removes both. Best-effort (warns, never fails the caller).
 #                                             A no-op in ArcaTerm, which has no sidebar API (the monitor pane shows progress)
+#   team.sh tickets [--slug <slug>] [--max <n>] [--dry-run] [--release <slice>] <team>
+#                                          -> ticket runs: claim every runnable /to-tickets slice that fits (blockers done,
+#                                             no file or Databricks-bundle overlap with in-flight slices, at most --max
+#                                             implementers (default 8) and the 8-teammate cap), one
+#                                             "claimed<TAB><slice><TAB><role s<id>><TAB><title><TAB><ticket>" line each, then a
+#                                             "tickets:" summary with the branch and start commit ("tickets: queue empty" when nothing
+#                                             is open or in flight); --dry-run lists "runnable" slices and claims nothing.
+#                                             The first claiming call records the tracker mode, slug, branch and start commit; it refuses
+#                                             a detached HEAD or uncommitted changes outside .scratch/ (exit 2). --release puts
+#                                             a claimed slice back. Needs run-afk's tracker tools (TEAM_TICKETS_LIB); exit 3 without
+#   team.sh integrate <team> <role>        -> land a finished implementer's slice on the run's branch: rebase team/<team>-<role>
+#                                             onto it, fast-forward, mark the slice done (tracked .scratch/: folded into the
+#                                             slice commit; github: comment + close). exit 2 refused, nothing changed (not
+#                                             finished, wrong branch, dirty checkout, no "Slice <id>:" commit, or it touches
+#                                             .scratch/); exit 5 rebase conflict, aborted, nothing changed, files listed
 #   (role, roles, role-pull, role-promote live in lib/roles.sh; status, monitor, sync in lib/status.sh;
-#    the ArcaTerm pane calls in lib/arcaterm.sh)
+#    the ArcaTerm pane calls in lib/arcaterm.sh; tickets and integrate in lib/tickets.sh)
 #   team.sh facts-lint [--pre-append <file>]  -> freshness of .team/facts.md facts (FRESH/CHECK/GONE/NOANCHOR + DUP); --pre-append scans <file> for secrets
 #   team.sh doccheck            -> doc drift guard: retired phrases, subcommands documented, SKILL flags present in HELP
 #   team.sh --help              -> prints this header. Any other unknown subcommand exits 2 (it never falls through to spawn).
@@ -106,14 +121,9 @@
 # ArcaTerm types the launch command into the new pane's shell, so spawn writes it to
 # $TEAM_REG_DIR/team-<team>-<role>.launch.sh and types only `bash <that file>`; close and reap remove it.
 # ArcaTerm titles a split pane itself (its process or agent), so only a --tabs teammate carries <team>-<role>.
-# Permission mode: a haiku-tier model (by resolved tier, so any id that behaves as haiku) always
-# gets --permission-mode dontAsk plus a per-teammate allowlist: Read/Glob/Grep, SendMessage,
-# `git status` (diff/log/show can write via --output), ls/wc, `team.sh facts-lint`, `cmux notify --title ...` (cmux only), and Edit on exactly its
-# <run>/reports/<role>.md, <run>/tasks.md and <run>/status/<role>.txt (<run> = parent of the
-# prompt file's prompts/ dir, which a haiku-tier prompt must live in). Haiku tier is refused with
-# --worktree. With no [model], the tier is that of the default model the teammate starts on
-# (ANTHROPIC_MODEL, else "model" in managed-settings, else ~/.claude/settings.json), so a haiku-tier
-# default gets the same treatment. Every other tier uses TEAM_PERMISSION_MODE (default auto).
+# Models: /team offers only opus- and sonnet-tier models (by `behavesAs`, so GLM/Kimi and every other
+# haiku-tier id are not offered and spawn refuses them, exit 3). With no [model] a teammate gets the
+# newest opus (`pick-model opus`). Every teammate uses TEAM_PERMISSION_MODE (default auto).
 # Spawned tabs/panes are recorded in $TEAM_REG_DIR/team-<team>.tabs (default /tmp; tests point it at a
 # scratch dir so they never read or rewrite live registries), one row each (written by _reg_add):
 # "<backend:cmux|arcaterm> <ref> <layout:pane|tab|dash> <title> <model|-> <subagent-model|-> <run-dir|-> <project-root>
@@ -125,7 +135,7 @@
 set -euo pipefail
 # Dispatch: anything not listed is refused here, because an unknown word would
 # otherwise fall through to the spawn path below and open a real pane.
-subs="init lead-title reap gate-init clean close finish models pick-model role roles role-pull role-promote status monitor sync facts-lint doccheck show list spawn"
+subs="init lead-title reap gate-init clean close finish models pick-model role roles role-pull role-promote status monitor sync tickets integrate facts-lint doccheck show list spawn"
 here=$(cd "$(dirname "$0")" && pwd)
 _usage() { sed -n '2,/^set -euo pipefail/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
 case ${1:-} in
@@ -189,10 +199,14 @@ if options:
         rows.append((o.get("label") or mid, mid, hit.group(0) if hit else "?"))
 else:
     # No managed picker: the built-in aliases are all that can be relied on.
-    rows = [("Opus", "opus", "opus"), ("Sonnet", "sonnet", "sonnet"), ("Haiku", "haiku", "haiku")]
+    rows = [("Opus", "opus", "opus"), ("Sonnet", "sonnet", "sonnet")]
 
-order = {"opus": 0, "sonnet": 1, "haiku": 2, "?": 3}
-rows.sort(key=lambda r: order.get(r[2], 3))
+# Only opus and sonnet tier are offered: a teammate on anything cheaper (haiku, or a model that
+# behaves as haiku) is not worth its session, and dontAsk allowlists do not survive managed
+# settings that keep only managed permission rules.
+rows = [r for r in rows if r[2] in ("opus", "sonnet")]
+order = {"opus": 0, "sonnet": 1}
+rows.sort(key=lambda r: order[r[2]])
 for r in rows:
     print("\t".join(r))
 PY
@@ -200,14 +214,14 @@ PY
 
 # Newest claude-* model of a tier (user decision: version beats the org's list order;
 # equal versions keep list order). Non-claude models that behave as a tier (GLM, Kimi) are
-# only ever used by explicit id. An empty tier falls back down (opus -> sonnet -> haiku):
+# only ever used by explicit id. An empty opus tier falls back to sonnet:
 # warning on stderr, return 1. Return 2 = bad tier, 3 = nothing at or below the tier.
 _pick_model() {
-  case ${1:-} in opus|sonnet|haiku) ;; *) echo "pick-model: tier must be opus|sonnet|haiku" >&2; return 2 ;; esac
+  case ${1:-} in opus|sonnet) ;; *) echo "pick-model: tier must be opus|sonnet" >&2; return 2 ;; esac
   local rows; rows=$(_team_models) || return 3
   printf '%s\n' "$rows" | python3 -c '
 import re, sys
-want = sys.argv[1]; chain = ["opus", "sonnet", "haiku"]
+want = sys.argv[1]; chain = ["opus", "sonnet"]
 rows = [l.rstrip("\n").split("\t") for l in sys.stdin if l.count("\t") == 2]
 def key(mid):
     base = re.sub(r"\[.*?\]", "", mid).rsplit(".", 1)[-1]
@@ -224,14 +238,14 @@ print(f"pick-model: no claude model at or below tier {want}", file=sys.stderr); 
 ' "$1"
 }
 
-# Tier of a model id or alias (opus|sonnet|haiku), or nothing when it is not listed.
+# Tier of a model id or alias (opus|sonnet), or nothing when it is not offered.
 _model_tier() {
-  case ${1:-} in opus|sonnet|haiku) echo "$1"; return 0 ;; ''|-) return 0 ;; esac
+  case ${1:-} in opus|sonnet) echo "$1"; return 0 ;; ''|-) return 0 ;; esac
   _team_models | awk -F'\t' -v m="$1" '$2==m{print $3; exit}'
 }
 # 0 when a recorded model id is no longer offered here, so the pane's next call will fail.
 _model_gone() {
-  case ${1:-} in ''|-|opus|sonnet|haiku) return 1 ;; esac
+  case ${1:-} in ''|-|opus|sonnet) return 1 ;; esac
   ! _team_models | awk -F'\t' -v m="$1" '$2==m{f=1} END{exit !f}'
 }
 
@@ -394,25 +408,6 @@ _close_browsers() {
   done < "$f"
   if [ -z "$left" ]; then rm -f "$f"; else printf '%s' "$left" > "$f"; fi
 }
-# The model a teammate started without --model runs on (claude's own order): ANTHROPIC_MODEL, else
-# "model" in managed-settings, else in ~/.claude/settings.json (only TEAM_MODELS_FILE when set).
-_default_model() {
-  [ -z "${ANTHROPIC_MODEL:-}" ] || { echo "$ANTHROPIC_MODEL"; return 0; }
-  python3 - <<'PY'
-import json, os
-paths = ([os.environ["TEAM_MODELS_FILE"]] if os.environ.get("TEAM_MODELS_FILE") else
-         ["/Library/Application Support/ClaudeCode/managed-settings.json",
-          os.path.expanduser("~/.claude/settings.json")])
-for path in paths:
-    try:
-        with open(path, encoding="utf-8") as fh:
-            m = json.load(fh).get("model")
-    except Exception:
-        continue
-    if m:
-        print(m); break
-PY
-}
 # Drop registry rows whose pane is gone, so a reused slug or a dead teammate never holds a
 # cap slot, anchors the grid, or blocks a respawn with the same name. A finished row is kept:
 # its pane is gone on purpose, and it is the only record of the session id to resume.
@@ -445,15 +440,15 @@ _mates() { [ -f "$1" ] || return 0; awk '($3=="pane" || $3=="tab") && $9!="finis
 
 # Libraries: functions only (sub_<name> per subcommand), sourced after the helpers they use,
 # so a missing lib only disables its own subcommands.
-for _lib in "$here/lib/roles.sh" "$here/lib/status.sh" "$here/lib/arcaterm.sh"; do
+for _lib in "$here/lib/roles.sh" "$here/lib/status.sh" "$here/lib/arcaterm.sh" "$here/lib/tickets.sh"; do
   # shellcheck source=/dev/null
   if [ -f "$_lib" ]; then . "$_lib"; fi
 done
 case $sub in
-  role|roles|role-pull|role-promote|status|monitor|sync)
+  role|roles|role-pull|role-promote|status|monitor|sync|tickets|integrate)
     fn="sub_${sub//-/_}"
     declare -F "$fn" >/dev/null || {
-      case $sub in status|monitor|sync) l=status ;; *) l=roles ;; esac
+      case $sub in status|monitor|sync) l=status ;; tickets|integrate) l=tickets ;; *) l=roles ;; esac
       echo "team.sh: '$sub' needs $here/lib/$l.sh, which is missing" >&2; exit 3; }
     "$fn" "$@"; exit $? ;;
 esac
@@ -713,7 +708,7 @@ fi
 # Exit 1 if anything is off. Edit the owner file (see CLAUDE.md), then re-run.
 if [ "$sub" = doccheck ]; then
   rc=0
-  for pat in 'inherit the lead' 'stacked' '3–5' '2–5' 'as much as possible' '--tmux' 'tmux pane' 'tmux attach' 'tmux session' 'team.sh park'; do
+  for pat in 'inherit the lead' 'stacked' '3–5' '2–5' 'as much as possible' '--tmux' 'tmux pane' 'tmux attach' 'tmux session' 'team.sh park' 'superpowers:' 'dontAsk'; do
     grep -rnF -- "$pat" "$here/SKILL.md" "$here/HELP.md" "$here/README.md" 2>/dev/null && rc=1
   done
   hdr=$(sed '/^set -euo pipefail/q' "$here/team.sh")
@@ -926,64 +921,33 @@ be=$(_backend)
 # into a tab. So reject an unknown model here, before any worktree or pane exists.
 if [ -n "$model" ]; then
   model_ok=
-  case "$model" in opus|sonnet|haiku) model_ok=1 ;; esac
+  case "$model" in opus|sonnet) model_ok=1 ;; esac
   if [ -z "$model_ok" ] && _team_models | awk -F'\t' -v m="$model" '$2==m{f=1} END{exit !f}'; then model_ok=1; fi
   if [ -z "$model_ok" ]; then
-    echo "unknown model: $model" >&2
-    echo "available (alias opus|sonnet|haiku also accepted):" >&2
+    echo "model not offered: $model (/team offers opus- and sonnet-tier models only)" >&2
+    echo "available (alias opus|sonnet also accepted):" >&2
     _team_models | awk -F'\t' '{print "  "$2"  ["$3"]"}' >&2
     exit 3
   fi
 fi
-tier=$(_model_tier "$model") dmodel=
 if [ -z "$model" ]; then
-  # No --model: the teammate starts on claude's default model, so its tier decides the
-  # permission mode exactly as an explicit model would (a haiku-tier default gets dontAsk).
-  dmodel=$(_default_model)
-  tier=$(_model_tier "$dmodel")
-  case "$tier:$dmodel" in :*haiku*) tier=haiku ;; esac
-  echo "warn: no model picked for $team-$role — it starts on the default model (${dmodel:-the built-in default}${tier:+, $tier tier})." >&2
-  echo "      Fit one per role instead: team.sh pick-model <tier>." >&2
+  # No [model]: opus, the default for every role except ticket implementers (sonnet). Never
+  # claude's own default model, which may be one /team does not offer.
+  model=$(_pick_model opus 2>/dev/null) || { echo "spawn: no opus- or sonnet-tier model is offered here (team.sh models)" >&2; exit 3; }
+  echo "note: no model given for $team-$role; using $model (pass one per role: team.sh pick-model opus|sonnet)" >&2
 fi
 title="$team-$role"
 reg=$(_reg "$team")
 
-# The run dir is the parent of the prompt's prompts/ dir; status and the haiku allowlist use it.
+# The run dir is the parent of the prompt's prompts/ dir; status uses it.
 rundir=-
 pdir=$(dirname "$pfile")
 [ "$(basename "$pdir")" = prompts ] && rundir=$(dirname "$pdir")
 
-# Haiku tier (by tier, not name: GLM/Kimi behave as haiku) falls back to prompting under
-# `auto` and stalls unattended, so it always runs dontAsk with an explicit allowlist, whatever
-# TEAM_PERMISSION_MODE says. The allowlist is read-only except Edit on this teammate's own
-# report, tasks.md and status file: `Write(//abs)` is denied under dontAsk, `Edit(//abs)` is
-# not. `//` + abs path, unresolved, because the rule matches the path as the teammate writes it.
-# No other git (commit/push, or --output writes) and no python3. Haiku tier cannot commit, so no build runs.
-allow=
-if [ "$tier" = haiku ]; then
-  [ -z "$worktree" ] || { echo "haiku-tier model (${model:-$dmodel}) cannot run with --worktree: its allowlist cannot commit; use a sonnet-tier model" >&2; exit 2; }
-  [ "$rundir" != - ] || { echo "haiku-tier teammate needs its prompt in <run>/prompts/ so its report path is known: $pfile" >&2; exit 2; }
-  allow="Read,Glob,Grep,SendMessage,ListAgents"
-  allow+=",Edit(/$rundir/reports/$role.md),Edit(/$rundir/tasks.md),Edit(/$rundir/status/$role.txt)"
-  allow+=",Bash(ls:*),Bash(wc:*)"
-  # Every spawn prompt asks for facts-lint; a rule matches the command text as typed, so both forms.
-  allow+=",Bash(bash ~/.claude/skills/team/team.sh facts-lint:*),Bash(bash $here/team.sh facts-lint:*)"
-  # Only `git status`: diff/log/show take --output=<file> (writes, live-probed); read code with Read/Grep/Glob.
-  allow+=",Bash(git status:*)"
-  # teammate-rules.md has every cmux teammate `cmux notify --title ... --body ...` when it reports or
-  # needs input (ring + badge; the command writes no files). The prefix starts at --title so a bare
-  # `--clear` or `--workspace`/`--surface` first is denied; a prefix rule cannot forbid later flags.
-  # ArcaTerm raises its own attention from the agent's state, so its teammates get no notify rule.
-  [ "$be" != cmux ] || allow+=",Bash(cmux notify --title:*)"
-  pmode=dontAsk
-  echo "note: $title is haiku-tier (${model:-$dmodel}): --permission-mode dontAsk + read-only allowlist" >&2
-else
-  pmode=${TEAM_PERMISSION_MODE:-auto}
-fi
+pmode=${TEAM_PERMISSION_MODE:-auto}
 
-# Subagents launched without a model default to haiku and can overflow its context, so
-# point them at the newest sonnet -- resolved here, in-process, and only on an exact match:
-# after a fallback the "sonnet" would be a haiku id, the very thing this guards against.
+# Subagents launched without a model default to haiku (managed settings can force it), which /team
+# does not use, so point them at the newest sonnet -- resolved here, in-process, sonnet tier only.
 if submodel=$(_pick_model sonnet 2>/dev/null) && [ -n "$submodel" ]; then :; else
   submodel=-
   echo "warn: no sonnet-tier model; CLAUDE_CODE_SUBAGENT_MODEL not set for $title" >&2
@@ -1088,8 +1052,6 @@ else
   sid=$(python3 -c 'import uuid; print(uuid.uuid4())')
   cmd="cd $(printf %q "$dir") && $envs claude --session-id $sid --name $(printf %q "$title") --permission-mode $(printf %q "$pmode")"
 fi
-# One comma-joined value: the flag is variadic and would otherwise swallow the prompt.
-[ -n "$allow" ] && cmd+=" --allowedTools $(printf %q "$allow")"
 if [ -z "$resume" ] && [ -s "$sysprompt" ]; then cmd+=" --append-system-prompt-file $(printf %q "$sysprompt")"; fi
 [ -n "$model" ] && cmd+=" --model $(printf %q "$model")"
 cmd+=" \"\$(cat $(printf %q "$pfile"))\""

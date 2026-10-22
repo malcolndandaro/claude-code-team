@@ -11,7 +11,7 @@
 #                      appends a registry row (root + state=live inserted automatically)
 #   _pane_of <ref>     prints cmux pane_ref or "gone" (cmux only)
 #   _lead_pane         prints "<pane_ref> <surface_ref>" of caller's session
-#   _model_tier <m>    prints opus|sonnet|haiku or empty
+#   _model_tier <m>    prints opus|sonnet or empty
 #   _model_gone <m>    returns 0 if model not in org picker (fallback defined below)
 #   _alive <b> <r>     returns 0 if surface/pane exists (fallback defined below)
 #   _require_cmux [ws] exits 3 if cmux absent/unhealthy; ws also checks CMUX_*IDs
@@ -139,14 +139,6 @@ _st_state() {
   fi
 }
 
-# _st_unattended <model>: 0 when the model runs unattended (haiku tier gets dontAsk), so it never
-# waits on a human and a WAITING flag would be noise.
-_st_unattended() {
-  case "${1:-}" in *haiku*|*glm*|*kimi*) return 0 ;; esac
-  declare -f _model_tier >/dev/null 2>&1 || return 1
-  [ "$(_model_tier "${1:-}" 2>/dev/null || true)" = haiku ]
-}
-
 # ---------------------------------------------------------------------------
 # _st_row <row> <run> <leadpane> <team>: one TAB-separated record per teammate
 #   role  title  state  milestone  step  age_min(-1 = none)  note
@@ -270,15 +262,12 @@ _st_row() {
         fi
 
         # WAITING / IDLE: derive from newest cmux notification for this surface.
-        # Skip WAITING for haiku/dontAsk tier (no human approval needed).
         # Probed by rev4-tests (CLI 2.1.294):
         #   AskUserQuestion  → title="Claude question", subtitle=""
         #   Completion/Stop  → title="Claude Code",     subtitle="Completed in <session>"
         #   PermissionRequest → NOT in list-notifications (uses cmux hooks feed).
         #     Permission prompts cannot be detected via notifications; a teammate
         #     blocked on one surfaces only as STALLED after 10 min of silence.
-        local skip_waiting=
-        _st_unattended "${mdl:-}" && skip_waiting=1
         if [ -n "$_ST_UUID_MAP" ] && [ -n "$_ST_NOTIF_DATA" ]; then
           local uuid
           uuid=$(awk -F'=' -v r="$ref" '$1==r {print $2; exit}' <<<"$_ST_UUID_MAP" 2>/dev/null || true)
@@ -289,9 +278,7 @@ _st_row() {
             if [ -n "$notif_line" ]; then
               notif_title=$(awk -F'|' '{print $2}' <<<"$notif_line")
               notif_subtitle=$(awk -F'|' '{print $3}' <<<"$notif_line")
-              if [ -z "$skip_waiting" ]; then
-                printf '%s\n' "$notif_title" | grep -qi 'claude question' && waiting=1
-              fi
+              printf '%s\n' "$notif_title" | grep -qi 'claude question' && waiting=1
               # Session completed its last turn but report not yet on disk
               if [ "$ms" != reported ]; then
                 printf '%s\n' "$notif_subtitle" | grep -qi '^completed in ' && idle=1
@@ -319,7 +306,7 @@ _st_row() {
         unavailable) alive= ;;
         *) alive=1 ;;
       esac
-      if [ "$ast" = needs-input ] && ! _st_unattended "${mdl:-}"; then waiting=1; fi
+      [ "$ast" != needs-input ] || waiting=1
       case $ast in idle|unread) [ "$ms" != reported ] && idle=1 ;; esac
     fi
   fi

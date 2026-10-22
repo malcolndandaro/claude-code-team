@@ -84,13 +84,15 @@ unset TEAM_MEMBER
 unset MACTERM_SESSION TEAM_BACKEND
 
 # ── Stub model list via HOME override ──
+# The ids mirror the managed picker (opus/sonnet 5.5 [1m], haiku 5.5, GLM). opus-4-8 is a deliberately
+# older opus, so design-B can prove that the newest version wins.
 mkdir -p "$W/home/.claude/team/roles"
 cat > "$W/home/.claude/settings.json" <<'JSON'
 {"modelPicker":{"options":[
-  {"model":"system.ai.claude-opus-5-5","behavesAs":"opus"},
+  {"model":"system.ai.claude-opus-5-5[1m]","behavesAs":"opus"},
   {"model":"system.ai.claude-opus-4-8","behavesAs":"opus"},
-  {"model":"system.ai.claude-sonnet-4-6","behavesAs":"sonnet"},
-  {"model":"system.ai.claude-haiku-4-5","behavesAs":"haiku"},
+  {"model":"system.ai.claude-sonnet-5-5[1m]","behavesAs":"sonnet"},
+  {"model":"system.ai.claude-haiku-5-5","behavesAs":"haiku"},
   {"model":"system.ai.glm-5-3","behavesAs":"haiku"}
 ]}}
 JSON
@@ -264,26 +266,35 @@ _mkrun() {
 # `team.sh pick-model <tier>`: exits 0 exact match, 1 fallback, 2 bad tier, 3 no match
 # ══════════════════════════════════════════════════════════════════
 
-# pick-model sonnet → system.ai.claude-sonnet-4-6
+# pick-model sonnet → system.ai.claude-sonnet-5-5[1m]
 {
   out=$(bash "$TEAM_SH" pick-model sonnet 2>/dev/null) && rc=0 || rc=$?
-  [ "$rc" = 0 ] && [ "$out" = "system.ai.claude-sonnet-4-6" ] \
+  [ "$rc" = 0 ] && [ "$out" = "system.ai.claude-sonnet-5-5[1m]" ] \
     && pass "design-B: pick-model sonnet → correct id" \
     || fail "design-B: pick-model sonnet → correct id" "rc=$rc out=$out"
 }
 
-# pick-model haiku → system.ai.claude-haiku-4-5 (GLM/Kimi not returned by pick-model)
+# pick-model haiku → exit 2: /team offers only opus and sonnet tier
 {
-  out=$(bash "$TEAM_SH" pick-model haiku 2>/dev/null) && rc=0 || rc=$?
-  [ "$rc" = 0 ] && [ "$out" = "system.ai.claude-haiku-4-5" ] \
-    && pass "design-B: pick-model haiku → claude-family only" \
-    || fail "design-B: pick-model haiku → claude-family only" "rc=$rc out=$out"
+  out=$(bash "$TEAM_SH" pick-model haiku 2>&1) && rc=0 || rc=$?
+  [ "$rc" = 2 ] && [[ $out == *"tier must be opus|sonnet"* ]] \
+    && pass "design-B: pick-model haiku → exit 2 (opus|sonnet only)" \
+    || fail "design-B: pick-model haiku → exit 2 (opus|sonnet only)" "rc=$rc out=$out"
+}
+
+# models lists opus and sonnet tier only: no haiku, no GLM (behaves as haiku)
+{
+  out=$(bash "$TEAM_SH" models 2>&1) && rc=0 || rc=$?
+  [ "$rc" = 0 ] && [[ $out == *"[opus]"* ]] && [[ $out == *"[sonnet]"* ]] \
+    && [[ $out != *haiku* ]] && [[ $out != *glm* ]] \
+    && pass "design-B: models lists opus and sonnet tier only" \
+    || fail "design-B: models lists opus and sonnet tier only" "rc=$rc out=$out"
 }
 
 # pick-model opus → newest opus (5.5, not 4-8) — design B: newest version wins
 {
   out=$(bash "$TEAM_SH" pick-model opus 2>/dev/null) && rc=0 || rc=$?
-  [ "$rc" = 0 ] && [ "$out" = "system.ai.claude-opus-5-5" ] \
+  [ "$rc" = 0 ] && [ "$out" = "system.ai.claude-opus-5-5[1m]" ] \
     && pass "design-B: pick-model opus → newest version (5.5 not 4-8)" \
     || fail "design-B: pick-model opus → newest version (5.5 not 4-8)" "rc=$rc out=$out"
 }
@@ -295,18 +306,23 @@ _mkrun() {
     || fail "design-B: pick-model badtier → exit 2" "rc=$rc"
 }
 
-# pick-model fallback: only haiku in model list → sonnet falls back, exit 1
+# pick-model fallback: no opus in the model list → opus falls back to sonnet, exit 1
 # Use TEAM_MODELS_FILE so managed-settings.json is bypassed entirely.
 {
   cat > "$W/fallback_models.json" <<'JSON'
 {"modelPicker":{"options":[
-  {"model":"system.ai.claude-haiku-4-5","behavesAs":"haiku"}
+  {"model":"system.ai.claude-sonnet-5-5[1m]","behavesAs":"sonnet"},
+  {"model":"system.ai.claude-haiku-5-5","behavesAs":"haiku"}
 ]}}
 JSON
   out=$(TEAM_MODELS_FILE="$W/fallback_models.json" \
-    bash "$TEAM_SH" pick-model sonnet 2>&1) && rc=0 || rc=$?
-  [ "$rc" = 1 ] && pass "design-B: pick-model falls back one tier (exit 1)" \
+    bash "$TEAM_SH" pick-model opus 2>/dev/null) && rc=0 || rc=$?
+  [ "$rc" = 1 ] && [ "$out" = system.ai.claude-sonnet-5-5[1m] ] && pass "design-B: pick-model falls back one tier (exit 1)" \
     || fail "design-B: pick-model falls back one tier (exit 1)" "rc=$rc out=${out:0:120}"
+  out=$(TEAM_MODELS_FILE="$W/fallback_models.json" \
+    bash "$TEAM_SH" pick-model sonnet 2>/dev/null) && rc=0 || rc=$?
+  [ "$rc" = 0 ] && [ "$out" = system.ai.claude-sonnet-5-5[1m] ] && pass "design-B: sonnet never falls back to haiku" \
+    || fail "design-B: sonnet never falls back to haiku" "rc=$rc out=${out:0:120}"
 }
 
 # pick-model exit 3 when no claude-family match at all (only non-claude models)
@@ -338,17 +354,16 @@ JSON
   (cd "$R" && bash "$TEAM_SH" spawn "$TM" worker "$pf" sonnet) \
     >/dev/null 2>&1 && true || true
   rm -f "$TEAM_REG_DIR/team-$TM.tabs"
-  # CLAUDE_CODE_SUBAGENT_MODEL=<newest-sonnet> must appear in cmd (stub: system.ai.claude-sonnet-4-6)
-  grep -q 'CLAUDE_CODE_SUBAGENT_MODEL=system.ai.claude-sonnet-4-6' "$CMUX_LOG" \
+  # CLAUDE_CODE_SUBAGENT_MODEL=<newest-sonnet> must appear in cmd (stub: system.ai.claude-sonnet-5-5[1m])
+  # Fixed string: the logged command is %q-quoted, so the id's [1m] shows up as \[1m\].
+  grep -qF 'CLAUDE_CODE_SUBAGENT_MODEL=system.ai.claude-sonnet-5-5\[1m\]' "$CMUX_LOG" \
     && pass "N1/N2: CLAUDE_CODE_SUBAGENT_MODEL set in spawned cmd" \
     || fail "N1/N2: CLAUDE_CODE_SUBAGENT_MODEL set in spawned cmd" \
        "cmux=$(grep SUBAGENT_MODEL "$CMUX_LOG" || echo '(not found)')"
 }
 
 # ══════════════════════════════════════════════════════════════════
-# N4 — haiku tier + --worktree refused (exit 2)
-# spawn must refuse haiku-tier model + --worktree combination:
-# haiku teammates can't commit/gate in a worktree build run.
+# N4 — a haiku-tier model is not offered: spawn exits 3 before any worktree or pane
 # ══════════════════════════════════════════════════════════════════
 {
   R="$W/n4"; _mkgit "$R"
@@ -356,13 +371,13 @@ JSON
   TM="n4$$"
   _reset_logs
   out=$(cd "$R" && bash "$TEAM_SH" spawn --worktree "$TM" worker "$pf" \
-    system.ai.claude-haiku-4-5 2>&1) && rc=0 || rc=$?
-  # exit 2 and no new-split/new-surface (cmux ping/version calls are ok, no pane)
+    system.ai.claude-haiku-5-5 2>&1) && rc=0 || rc=$?
   pane_opened=0; grep -qE 'new-split|new-surface' "$CMUX_LOG" 2>/dev/null && pane_opened=1 || true
-  [ "$rc" = 2 ] && [ "$pane_opened" = 0 ] \
-    && pass "N4: haiku + --worktree refused (exit 2, no pane)" \
-    || fail "N4: haiku + --worktree refused (exit 2, no pane)" \
-       "rc=$rc pane_opened=$pane_opened cmux=$(cat "$CMUX_LOG")"
+  [ "$rc" = 3 ] && [ "$pane_opened" = 0 ] && [ ! -d "$R/.team/worktrees/$TM-worker" ] \
+    && [[ $out == *"model not offered: system.ai.claude-haiku-5-5"* ]] \
+    && pass "N4: haiku model refused (exit 3, no worktree, no pane)" \
+    || fail "N4: haiku model refused (exit 3, no worktree, no pane)" \
+       "rc=$rc pane_opened=$pane_opened out=${out:0:160}"
 }
 
 # ══════════════════════════════════════════════════════════════════
@@ -382,8 +397,8 @@ JSON
 }
 
 # ══════════════════════════════════════════════════════════════════
-# N5/N6 — haiku tier → --permission-mode dontAsk in spawned cmd
-# Haiku-tier model must trigger dontAsk + allowedTools in the cmd.
+# N5/N6 — a model that behaves as haiku (GLM) is refused too; no teammate ever gets dontAsk or
+# --allowedTools (managed settings that keep only managed rules would ignore the allowlist)
 # ══════════════════════════════════════════════════════════════════
 {
   R="$W/n56"; _mkgit "$R"
@@ -391,54 +406,16 @@ JSON
   pf="$run/prompts/n5worker.md"; printf 'prompt\n' > "$pf"
   TM="n56$$"
   _reset_logs
-  (cd "$R" && bash "$TEAM_SH" spawn "$TM" n5worker "$pf" \
-    system.ai.claude-haiku-4-5) >/dev/null 2>&1 && true || true
-  rm -f "$TEAM_REG_DIR/team-$TM.tabs"
-  grep -q 'dontAsk' "$CMUX_LOG" \
-    && pass "N5: haiku spawn uses dontAsk in cmd" \
-    || fail "N5: haiku spawn uses dontAsk in cmd" \
-       "cmux=$(grep -m1 '' "$CMUX_LOG" || echo '(empty)')"
-}
-
-# N5 variant: --model <haiku-id> also triggers dontAsk
-{
-  R="$W/n56b"; _mkgit "$R"
-  run="$R/.team/runs/2026-10-08-myteam"; _mkrun "$run"
-  pf="$run/prompts/n5b.md"; printf 'prompt\n' > "$pf"
-  TM="n56b$$"
+  out=$(cd "$R" && bash "$TEAM_SH" spawn "$TM" n5worker "$pf" system.ai.glm-5-3 2>&1) && rc=0 || rc=$?
+  [ "$rc" = 3 ] && ! grep -qE 'new-split|new-surface' "$CMUX_LOG" \
+    && pass "N5: GLM (behaves as haiku) refused, exit 3, no pane" \
+    || fail "N5: GLM (behaves as haiku) refused, exit 3, no pane" "rc=$rc out=${out:0:160}"
   _reset_logs
-  (cd "$R" && bash "$TEAM_SH" spawn "$TM" n5b "$pf" \
-    system.ai.glm-5-3) >/dev/null 2>&1 && true || true
+  (cd "$R" && bash "$TEAM_SH" spawn "$TM" n6worker "$pf" system.ai.claude-sonnet-5-5[1m]) >/dev/null 2>&1 || true
   rm -f "$TEAM_REG_DIR/team-$TM.tabs"
-  grep -q 'dontAsk' "$CMUX_LOG" \
-    && pass "N6: GLM/haiku-tier model also triggers dontAsk" \
-    || fail "N6: GLM/haiku-tier model also triggers dontAsk" \
-       "cmux=$(grep -m1 '' "$CMUX_LOG" || echo '(empty)')"
-}
-
-# N4: haiku allowlist: contains Bash(git status:*) but NOT git diff/log/Bash(git:*)/python3
-{
-  R="$W/n4c"; _mkgit "$R"
-  run="$R/.team/runs/2026-10-08-myteam"; _mkrun "$run"
-  pf="$run/prompts/worker.md"; printf 'prompt\n' > "$pf"
-  TM="n4c$$"
-  _reset_logs
-  (cd "$R" && bash "$TEAM_SH" spawn "$TM" worker "$pf" \
-    system.ai.claude-haiku-4-5) >/dev/null 2>&1 && true || true
-  rm -f "$TEAM_REG_DIR/team-$TM.tabs"
-  has_status=0; has_diff=0; has_python3=0
-  # Log uses printf %q escaping: "git\ status" in the line; use .* to match any separator
-  grep -q 'git.*status' "$CMUX_LOG" && has_status=1 || true
-  # git diff/log/Bash(git:*) must NOT appear (44edfd6 removes them; they write via --output)
-  grep -qE 'git.*diff|git.*log|git.*show|Bash.git:..\)' "$CMUX_LOG" && has_diff=1 || true
-  grep -q 'python3' "$CMUX_LOG" && has_python3=1 || true
-  [ "$has_status" = 1 ] && pass "N4: haiku allowlist contains Bash(git status:*)" \
-    || fail "N4: haiku allowlist contains Bash(git status:*)" \
-       "cmux=$(grep -o 'allowedTools[^\"]*' "$CMUX_LOG" | head -1 || echo '(not found)')"
-  [ "$has_diff" = 0 ] && pass "N4: haiku allowlist excludes git diff/log/Bash(git:*)" \
-    || fail "N4: haiku allowlist excludes git diff/log/Bash(git:*)" "found in cmux log"
-  [ "$has_python3" = 0 ] && pass "N4: haiku allowlist excludes python3" \
-    || fail "N4: haiku allowlist excludes python3" "found in cmux log"
+  grep -q 'new-split' "$CMUX_LOG" && ! grep -qE 'dontAsk|allowedTools' "$CMUX_LOG" && grep -q -- '--permission-mode auto' "$CMUX_LOG" \
+    && pass "N6: teammates run in auto mode, never dontAsk or --allowedTools" \
+    || fail "N6: teammates run in auto mode, never dontAsk or --allowedTools" "cmux=$(grep -m1 new-split "$CMUX_LOG" || echo '(empty)')"
 }
 
 # ══════════════════════════════════════════════════════════════════
@@ -979,8 +956,7 @@ surface:13	$TM2-worker"
 }
 
 # ══════════════════════════════════════════════════════════════════
-# rev4-9b — no model + haiku-tier default → dontAsk + worktree refused
-# Decision 9 carry-over: haiku-tier lead with no --model → dontAsk.
+# rev4-9b — no model → the newest opus, never claude's own default (even a haiku-tier one)
 # ══════════════════════════════════════════════════════════════════
 {
   R="$W/rv9b"; _mkgit "$R"
@@ -988,32 +964,13 @@ surface:13	$TM2-worker"
   pf="$run/prompts/worker.md"; printf 'prompt\n' > "$pf"
   TM="rv9b$$"
   _reset_logs
-  # Use ANTHROPIC_MODEL to force haiku as the default (no --model arg to spawn)
-  (cd "$R" && ANTHROPIC_MODEL=system.ai.claude-haiku-4-5 \
-    bash "$TEAM_SH" spawn "$TM" worker "$pf") >/dev/null 2>&1 && true || true
+  out=$(cd "$R" && ANTHROPIC_MODEL=system.ai.claude-haiku-5-5 \
+    bash "$TEAM_SH" spawn "$TM" worker "$pf" 2>&1) && rc=0 || rc=$?
   rm -f "$TEAM_REG_DIR/team-$TM.tabs"
-  # dontAsk must appear in the cmux command string (spawn passes it to cmux new-split --command)
-  grep -q 'dontAsk' "$CMUX_LOG" \
-    && pass "rev4-9b: no-model + haiku-default → dontAsk in spawned cmd" \
-    || fail "rev4-9b: no-model + haiku-default → dontAsk in spawned cmd" \
-       "cmux=$(cat "$CMUX_LOG")"
-}
-
-# rev4-9b2: no model + haiku default + --worktree → exit 2 (haiku can't commit)
-{
-  R="$W/rv9b2"; _mkgit "$R"
-  run="$R/.team/runs/2026-10-08-myteam"; mkdir -p "$run/prompts"
-  pf="$run/prompts/worker.md"; printf 'prompt\n' > "$pf"
-  TM="rv9b2$$"
-  _reset_logs
-  out=$(cd "$R" && ANTHROPIC_MODEL=system.ai.claude-haiku-4-5 \
-    bash "$TEAM_SH" spawn --worktree "$TM" worker "$pf" 2>&1) && rc=0 || rc=$?
-  # exit 2 with no pane (cmux ping/version calls ok, new-split must not appear)
-  pane_opened=0; grep -qE 'new-split|new-surface' "$CMUX_LOG" 2>/dev/null && pane_opened=1 || true
-  [ "$rc" = 2 ] && [ "$pane_opened" = 0 ] \
-    && pass "rev4-9b2: no-model + haiku-default + --worktree → exit 2 (no pane)" \
-    || fail "rev4-9b2: no-model + haiku-default + --worktree → exit 2" \
-       "rc=$rc pane_opened=$pane_opened cmux=$(cat "$CMUX_LOG")"
+  [ "$rc" = 0 ] && grep -qF -- '--model system.ai.claude-opus-5-5\[1m\]' "$CMUX_LOG" && ! grep -q 'dontAsk' "$CMUX_LOG" \
+    && [[ $out == *"no model given for $TM-worker; using system.ai.claude-opus-5-5[1m]"* ]] \
+    && pass "rev4-9b: no model → newest opus with a note; a haiku default is never used" \
+    || fail "rev4-9b: no model → newest opus with a note; a haiku default is never used" "rc=$rc out=${out:0:160}"
 }
 
 # ══════════════════════════════════════════════════════════════════

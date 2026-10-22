@@ -9,13 +9,16 @@ and writes the final synthesis.
     /team <task> [options]
 
 ## Options
-    --roles N        Number of teammates, 2–8 (default ~3)
+    --tickets [slug] Ticket run: implement the feature's /to-tickets slices in parallel
+                     (see Run types). The slug picks a .scratch/<slug>/ feature when there
+                     are several; without tickets the lead plans them with you first
+    --roles N        Number of teammates, 2–8 (default ~3); on a ticket run, the most
+                     slices in flight at once (default: every runnable slice, cap 8)
     --rounds N       Challenge rounds after the first reports (default 1)
     --autoroles      Scan the project (README, layout, tests, git diff, stack) and propose
                      roles from it; waits for your OK before spawning
-    --model M        Force one model for every teammate (alias or full id); a haiku-tier id
-                     puts every role in dontAsk and is refused on build runs.
-                     Default: the lead picks a model per role (see Choosing models)
+    --model M        Force one model for every teammate: opus, sonnet, or a full id of
+                     either tier. Default: the lead picks per role (see Choosing models)
     --tabs           One tab per teammate instead of panes (cmux or ArcaTerm)
     --no-gate        Build runs: skip no-mistakes (commits stay local, no push/PR)
     --no-caveman     Teammates write normal prose instead of caveman terse style
@@ -30,7 +33,9 @@ and writes the final synthesis.
 
 ## Before spawning
 Every run starts with the lead closing any leftover teammates from earlier runs (it
-lists them for your approval first), then brainstorming the task with you: it re-reads the
+lists them for your approval first), then grilling the task with you (`grill-with-docs` when
+it builds something in a git repo, which also records the glossary and ADRs; `grilling`
+otherwise), every question through the lead's question prompt: it re-reads the
 earlier conversation, `.team/facts.md` and the last run's synthesis, asks whatever
 questions change the work, then writes back the task, the roles, what is out of scope and
 how the result gets verified. Teammates spawn only after you approve that — a wrong
@@ -47,26 +52,17 @@ assumption otherwise gets paid once per teammate.
   files per role when editing, 2–3 roles.
 
 ## Choosing models
-The lead lists what this machine actually offers (`team.sh models` — the set is
-org-managed, so it is read at run time, not hardcoded) and gives each role the
-cheapest tier that still fits it: the top tier for the adversarial role and for
-architecture / security / subtle debugging, the middle tier for ordinary work,
-and the cheap tier only for mechanical sweeps. `team.sh pick-model <tier>` returns
-the best model id for that tier on this machine (newest version within the `claude-*`
-family; GLM / Kimi only by explicit full id). If no model of the requested tier is
-available it falls back through the chain (opus → sonnet → haiku) and exits 1, so the
-lead can see a lower tier was used; exit 3 means no model is available at any tier. Cheap-tier (haiku) teammates — and any model id that resolves to haiku tier (e.g. GLM /
-Kimi) — always run unattended in `dontAsk` mode with a per-teammate allowlist:
-Read/Glob/Grep, SendMessage, ListAgents, Bash restricted to `git status`/`ls`/`wc`/
-`team.sh facts-lint`/`cmux notify --title ...` (cmux only), and Edit on their own report,
-tasks.md, and status file.
-`TEAM_PERMISSION_MODE` never applies to haiku tier.
-Denied tools show up in their report. Haiku tier is refused on build runs. Subagents
-launched by teammates default to Sonnet when available, unless the teammate specifies
-otherwise. The roster you approve shows each role's model, so you can change any of
-them before spawning, and the run record notes what each role ran on. An unrecognised
-model is refused up front rather than opening a pane on a dead session. `--model`
-forces one model everywhere; a haiku-tier id puts every role in dontAsk and is refused on build runs.
+Only two tiers are offered: **opus** and **sonnet**. Ticket implementers run on sonnet;
+every other role — reviewers, the adversarial role, researchers, build-run roles — runs on
+opus. `team.sh models` lists what this machine offers in those tiers (the set is
+org-managed, so it is read at run time, not hardcoded), and `team.sh pick-model opus|sonnet`
+returns the newest `claude-*` id of a tier; with no opus it falls back to sonnet and exits 1.
+A haiku-tier id (including GLM / Kimi, which behave as haiku) is refused before any pane
+opens, and a teammate spawned without a model gets the newest opus. Subagents run on
+sonnet by default, and every subagent call names its model (sonnet, or opus for judgment;
+never cheaper). The roster you approve shows each role's model, so you can change any of
+them before spawning, and the run record notes what each role ran on. `--model` forces
+one model everywhere.
 
 ## Run types
     Review run   Read-only task, or not a git repo. Teammates share the working tree;
@@ -80,6 +76,20 @@ forces one model everywhere; a haiku-tier id puts every role in dontAsk and is r
                  Summary lists every PR and flags overlapping files.
     Needs: no-mistakes (https://github.com/kunchenguid/no-mistakes) and an `origin`
     remote; without them the gate is skipped and commits stay local.
+    Ticket run   Implements a feature's /to-tickets slices in parallel. No tickets yet:
+                 the lead grills the feature with you, then writes the spec (to-spec)
+                 and the tickets (to-tickets, which you approve). You approve the queue;
+                 the lead claims every runnable slice (blockers done, no file or
+                 Databricks-bundle overlap) and spawns one sonnet implementer per slice,
+                 each in its own worktree, running /run-afk's Part B. As each one
+                 reports, the lead rebases its `Slice NN:` commit onto the branch you
+                 started from, fast-forwards it and marks the slice done, then claims
+                 what that unblocked. A conflict goes back to that implementer. When the
+                 queue is empty, an opus reviewer and an opus skeptic challenge the merged
+                 diff. Same tickets and tracker as /run-afk, so either picks up where the
+                 other stopped; GitHub mode closes each issue as its slice lands.
+    Needs: run-afk's tracker tools (~/.claude/skills/run-afk/ralph/lib, or
+    TEAM_TICKETS_LIB) and a tracker set up by /setup-matt-pocock-skills.
 
 ## Every teammate
 - Opens in a two-column grid right of the lead, so panes stay readable as the team grows.
@@ -89,7 +99,7 @@ forces one model everywhere; a haiku-tier id puts every role in dontAsk and is r
   report) if a later round needs that teammate. Finishing is refused unless the report is
   complete and, on a build run, the worktree has no uncommitted changes.
 - Pane/tab title is fixed to <team>-<role> (Claude's auto-titling is disabled).
-- Starts in auto permission mode (TEAM_PERMISSION_MODE overrides for non-haiku tiers; haiku tier always → dontAsk + per-teammate allowlist, regardless of TEAM_PERMISSION_MODE).
+- Starts in auto permission mode (TEAM_PERMISSION_MODE overrides it).
 - Splits its own work across subagents: anything independent (separate files, checks or
   drafts) is dispatched in one message so it runs concurrently, and its report says what
   it parallelised. It still verifies what the subagents hand back before reporting it.
@@ -108,8 +118,7 @@ Known behaviour to expect:
   prompt on the first request and replays it on resume; a changed prompt file is ignored with
   no error or warning. Anything a resumed teammate must be told differently goes in the lead's
   message to it. A fresh teammate does read the current rules.
-- The permission mode is re-applied on resume (verified for `--permission-mode`; that the
-  haiku-tier `--allowedTools` allowlist also re-applies is inferred, not observed).
+- The permission mode is re-applied on resume (verified for `--permission-mode`).
 - Resuming a build-run teammate after `team.sh clean` removed its worktree is refused (its
   directory is gone), so the lead starts a fresh teammate from its report.
 
@@ -185,6 +194,8 @@ alone and never closed; reap them from there. Requires cmux or ArcaTerm; skipped
     /team review my current changes --autoroles
     /team add retry logic to the ingestion job and cover it with tests --autoroles
     /team quick sanity review of src/utils.py --roles 2 --inline
+    /team implement the checkout-v2 tickets --tickets checkout-v2
+    /team build CSV export for the usage report      (the lead offers a ticket run)
 
 ## While it runs
 - Click into any teammate pane to talk to it directly or redirect it, or ask the lead to
@@ -195,8 +206,6 @@ alone and never closed; reap them from there. Requires cmux or ArcaTerm; skipped
   it. The teammate shows `WORKING` for about 10 minutes, then `STALLED?`. If a teammate has
   been quiet that long, ask the lead to `show` it (brings its pane to the front) before assuming a bug.
   In ArcaTerm the prompt shows as `waiting` right away: ArcaTerm reports that the teammate needs input.
-  (Haiku-tier teammates run in dontAsk mode and don't prompt; denied tools appear in
-  their report.)
 - A teammate that needs your input or a decision forwards the question to the lead via
   NEEDS INPUT with options and a recommendation; you answer it in the lead pane (with the
   recommended option presented first) and the lead relays it back — so you don't have
@@ -213,7 +222,6 @@ alone and never closed; reap them from there. Requires cmux or ArcaTerm; skipped
     waiting      AskUserQuestion notification detected — teammates must not use this;
                  `show` its pane and SendMessage it to send NEEDS INPUT to the lead instead.
                  In ArcaTerm, also a tool-permission prompt waiting for you: `show` it first.
-                 Not detected for haiku/dontAsk tier.
     model gone   Its model is no longer available — respawn with a different model
     dead         Session exited — respawn it (a note says when its report is safe on disk;
                  in ArcaTerm a note also says when claude exited and left its pane open)
@@ -261,11 +269,8 @@ Consensus (findings that survived challenge, with evidence) · Disputed (each
 side's best evidence) · Dropped (refuted) · Next steps.
 
 ## Notes
-- Non-haiku teammates start in auto permission mode (set TEAM_PERMISSION_MODE to override).
-  Haiku-tier teammates always run unattended in dontAsk mode with a per-teammate allowlist
-  (Read/Glob/Grep, SendMessage/ListAgents, Bash: git status/ls/wc/facts-lint/`cmux notify
-  --title ...` (cmux only), Edit on own report+tasks.md+status); TEAM_PERMISSION_MODE has no effect on
-  haiku tier; they are refused on build runs.
+- Teammates start in auto permission mode (set TEAM_PERMISSION_MODE to override). Only
+  opus- and sonnet-tier models are offered (see Choosing models).
 - The hard cap is 8 teammates (spawn refuses beyond it).
 - Cost: every teammate is a full Claude session with its own context window,
   so cost scales with team size. Prefer 2–3 sharp roles; the lead already fits a model

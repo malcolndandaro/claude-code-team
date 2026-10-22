@@ -24,8 +24,10 @@ the slowest teammate sets the pace for the whole team.
   reached"; it never runs. Dispatch in batches of 4, wait for all 4 to return, then
   dispatch the next batch.
   Verify that every subagent you dispatched actually returned a notification before
-  treating its work as done. Each subagent call should pass a `model` (sonnet by
-  default; use a cheaper model only for purely mechanical sweeps such as grep, cat, or count).
+  treating its work as done. Every subagent call must pass a `model`: `sonnet` by default,
+  `opus` when the piece needs sustained judgment. Never a cheaper model (haiku, or anything
+  that behaves as one), not even for a grep sweep, and never leave `model` out: managed
+  settings can force a model-less Explore or general-purpose subagent onto haiku.
 - **Write a one-line status update** at each major step (e.g. `investigating facts`,
   `running facts-lint`, `drafting report`) to the exact path your spawn prompt gives you.
   `<role>` in those paths is the bare role name without the `<team>-` prefix — a teammate

@@ -69,9 +69,9 @@ export PATH="$W/bin:$PATH" CMUX_LOG
 mkdir -p "$W/home/.claude"
 cat > "$W/home/.claude/settings.json" <<'JSON'
 {"modelPicker":{"options":[
-  {"model":"system.ai.claude-opus-5-5","behavesAs":"opus"},
-  {"model":"system.ai.claude-sonnet-4-6","behavesAs":"sonnet"},
-  {"model":"system.ai.claude-haiku-4-5","behavesAs":"haiku"}]}}
+  {"model":"system.ai.claude-opus-5-5[1m]","behavesAs":"opus"},
+  {"model":"system.ai.claude-sonnet-5-5[1m]","behavesAs":"sonnet"},
+  {"model":"system.ai.claude-haiku-5-5","behavesAs":"haiku"}]}}
 JSON
 echo '{"projects":{}}' > "$W/home/.claude.json"
 export HOME="$W/home" TEAM_MODELS_FILE="$W/home/.claude/settings.json" TEAM_ROLES_DIR="$W/home/.claude/team/roles"
