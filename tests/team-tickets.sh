@@ -229,6 +229,18 @@ _where() { local f; for f in "$1"/.scratch/feat/issues/{,in-flight/,done/}"$2"-*
   [ "$rc" = 2 ] && [[ $out == *"changes .scratch/"* ]] && pass "K7: a slice branch that edits .scratch/ is refused" || fail "K7: a slice branch that edits .scratch/ is refused" "rc=$rc $out"
 }
 
+# ═══ K9 — close ends the ticket run: its record goes, so a reused slug starts fresh ═══
+{
+  R="$W/k9"; _mkrepo "$R" ignored
+  _tk "$R" k9 >/dev/null
+  _implement "$R" k9 01 1 src/a.txt "A1"
+  [ -f "$TEAM_REG_DIR/team-k9.tickets" ] || fail "K9: setup recorded the run"
+  (cd "$R" && bash "$TEAM_SH" close k9 >/dev/null 2>&1) || true
+  [ ! -f "$TEAM_REG_DIR/team-k9.tickets" ] && [ ! -f "$TEAM_REG_DIR/team-k9.tabs" ] \
+    && pass "K9: close removes the ticket-run record with the registry" \
+    || fail "K9: close removes the ticket-run record with the registry" "$(ls "$TEAM_REG_DIR" | grep k9 || true)"
+}
+
 # ═══ K8 — queue empty once every slice is done ═══
 {
   R="$W/k8"; _mkrepo "$R" ignored

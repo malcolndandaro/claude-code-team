@@ -573,7 +573,8 @@ if [ "$sub" = reap ]; then
     done < "$reg"
     [ -n "$yes" ] && [ -n "$ours" ] || continue
     # Rewrite our registry under its lock (subshell: _lock's EXIT trap releases it per registry).
-    ( _lock "$reg"; if [ -z "$keep" ]; then rm -f "$reg"; else printf '%s' "$keep" > "$reg"; fi )
+    # A fully reaped team also drops its ticket-run record, so a reused slug starts a fresh run.
+    ( _lock "$reg"; if [ -z "$keep" ]; then rm -f "$reg" "$dir/team-$t.tickets"; else printf '%s' "$keep" > "$reg"; fi )
     # A fully reaped team (only finished rows left, if any) must not leave its sidebar pill/progress
     # behind (lib/status.sh; best-effort).
     if [ -z "$held" ] && declare -F sub_sync >/dev/null; then sub_sync --clear "$t" || true; fi
@@ -632,7 +633,9 @@ if [ "$sub" = close ]; then
   done < "$reg"
   # Clear the lead sidebar pill/progress for this team (lib/status.sh); best-effort.
   if declare -F sub_sync >/dev/null; then sub_sync --clear "$team" || true; fi
-  [ -z "$keep" ] && { rm -f "$reg"; exit 0; }
+  # The team is over: its ticket-run record (mode, slug, branch, start commit) goes with the registry,
+  # so a later run reusing the slug never lands slices on the old branch.
+  [ -z "$keep" ] && { rm -f "$reg" "$(_reg_dir)/team-$team.tickets"; exit 0; }
   printf '%s' "$keep" > "$reg"; exit 1
 fi
 
