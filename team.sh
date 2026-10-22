@@ -19,7 +19,6 @@
 #                            Rows of other projects are never shown or touched; live rows with no root (legacy) are only counted, never named or closed.
 #                            Rows opened in the other terminal (a cmux row seen from ArcaTerm, or the reverse) are kept, never closed.
 #                            exit 1 if one could not be closed
-#   team.sh gate-init     -> sets up the no-mistakes gate for this repo (needs an "origin" remote)
 #   team.sh clean <team>  -> removes the team's worktrees that have no uncommitted changes (branches kept)
 #   team.sh finish <team> <role> -> after the lead received a teammate's report: mark its row finished (session id
 #                                  and cwd kept), then close its pane. exit 2 refused, nothing changed: the report did
@@ -135,7 +134,7 @@
 set -euo pipefail
 # Dispatch: anything not listed is refused here, because an unknown word would
 # otherwise fall through to the spawn path below and open a real pane.
-subs="init lead-title reap gate-init clean close finish models pick-model role roles role-pull role-promote status monitor sync tickets integrate facts-lint doccheck show list spawn"
+subs="init lead-title reap clean close finish models pick-model role roles role-pull role-promote status monitor sync tickets integrate facts-lint doccheck show list spawn"
 here=$(cd "$(dirname "$0")" && pwd)
 _usage() { sed -n '2,/^set -euo pipefail/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
 case ${1:-} in
@@ -586,14 +585,6 @@ if [ "$sub" = reap ]; then
   exit "$rc"
 fi
 
-if [ "$sub" = gate-init ]; then
-  command -v no-mistakes >/dev/null || { echo "no-mistakes not installed; gate skipped"; exit 3; }
-  git remote get-url origin >/dev/null 2>&1 || { echo "no origin remote; gate skipped"; exit 3; }
-  git remote get-url no-mistakes >/dev/null 2>&1 && { echo "gate already set up"; exit 0; }
-  no-mistakes init
-  exit 0
-fi
-
 if [ "$sub" = clean ]; then
   team=${1:?team}
   root=$(_root)
@@ -708,7 +699,7 @@ fi
 # Exit 1 if anything is off. Edit the owner file (see CLAUDE.md), then re-run.
 if [ "$sub" = doccheck ]; then
   rc=0
-  for pat in 'inherit the lead' 'stacked' '3–5' '2–5' 'as much as possible' '--tmux' 'tmux pane' 'tmux attach' 'tmux session' 'team.sh park' 'superpowers:' 'dontAsk'; do
+  for pat in 'inherit the lead' 'stacked' '3–5' '2–5' 'as much as possible' '--tmux' 'tmux pane' 'tmux attach' 'tmux session' 'team.sh park' 'superpowers:' 'dontAsk' 'no-mistakes' '--no-gate' 'gate-init'; do
     grep -rnF -- "$pat" "$here/SKILL.md" "$here/HELP.md" "$here/README.md" 2>/dev/null && rc=1
   done
   hdr=$(sed '/^set -euo pipefail/q' "$here/team.sh")

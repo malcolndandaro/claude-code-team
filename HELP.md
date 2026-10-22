@@ -20,7 +20,6 @@ and writes the final synthesis.
     --model M        Force one model for every teammate: opus, sonnet, or a full id of
                      either tier. Default: the lead picks per role (see Choosing models)
     --tabs           One tab per teammate instead of panes (cmux or ArcaTerm)
-    --no-gate        Build runs: skip no-mistakes (commits stay local, no push/PR)
     --no-caveman     Teammates write normal prose instead of caveman terse style
     --autoclose      Close the team right after the final synthesis
     --inline         No panes: teammates run as in-session subagents (no cmux or ArcaTerm required)
@@ -69,13 +68,11 @@ one model everywhere.
                  editing roles get exclusive files.
     Build run    Task edits code in a git repo. Each teammate works like a separate
                  person: own worktree (.team/worktrees/<team>-<role>), own branch
-                 (team/<team>-<role>), own commits, and its own no-mistakes gate —
-                 review → test → docs → lint → push → PR. The lead asks your OK first
-                 because this publishes branches/PRs. Judgment calls are forwarded
-                 to the lead via NEEDS INPUT; you answer them in the lead pane.
-                 Summary lists every PR and flags overlapping files.
-    Needs: no-mistakes (https://github.com/kunchenguid/no-mistakes) and an `origin`
-    remote; without them the gate is skipped and commits stay local.
+                 (team/<team>-<role>), own commits, and the project's checks before it
+                 reports. Nothing is pushed: the summary lists every branch and its last
+                 commit and flags overlapping files, and you merge the branches you want.
+                 Judgment calls are forwarded to the lead via NEEDS INPUT; you answer
+                 them in the lead pane.
     Ticket run   Implements a feature's /to-tickets slices in parallel. No tickets yet:
                  the lead grills the feature with you, then writes the spec (to-spec)
                  and the tickets (to-tickets, which you approve). You approve the queue;
@@ -262,7 +259,7 @@ alone and never closed; reap them from there. Requires cmux or ArcaTerm; skipped
   signal exists — so treat them as a rough indication, not a measurement. The ETA is a
   linear extrapolation (`elapsed x (100 - pct) / pct`) of that estimate.
 - Say "shut down the team" to close all teammate panes/tabs (the run record stays;
-  clean worktrees are removed, branches and PRs stay).
+  clean worktrees are removed, branches stay).
 
 ## Output
 Consensus (findings that survived challenge, with evidence) · Disputed (each

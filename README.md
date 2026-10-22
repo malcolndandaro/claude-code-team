@@ -17,7 +17,7 @@ It emulates Claude Code's experimental [agent teams](https://code.claude.com/doc
 - **One pane per teammate**, titled `<team>-<role>` so you can click in and talk to any of them directly (in ArcaTerm, `--tabs` keeps the titles; split panes show the agent's own title). A pane closes once its report is verified; a status pane opens by default so you can watch the whole team.
 - **Questions centralized in the lead** — a teammate that needs your input forwards it to the lead, which asks you (with options) in one place and relays your answer back, so you answer everything in the lead pane instead of hunting across panes.
 - **Challenge rounds** — each teammate gets the others' findings and must AGREE / DISPUTE / REFINE with evidence. Output: *Consensus · Disputed · Dropped · Next steps*.
-- **Build runs work like a real team** — in a git repo, each teammate gets its own worktree and branch, commits its own work, and gates it through [no-mistakes](https://github.com/kunchenguid/no-mistakes) (review → test → lint → push → PR). One PR per teammate.
+- **Build runs work like a real team** — in a git repo, each teammate gets its own worktree and branch, commits its own work and runs the project's checks before reporting. One branch per teammate, nothing pushed: you merge what you want.
 - **Ticket runs implement a feature in parallel** — the lead grills the feature with you, writes the spec and tickets (`grill-with-docs` → `to-spec` → `to-tickets`), or starts from tickets you already have (`--tickets`). One sonnet implementer per runnable slice works in its own worktree; each finished slice is rebased onto your branch as one `Slice NN:` commit and unblocks the next, and an opus reviewer and skeptic challenge the result. Same tickets and tracker as `/run-afk`.
 - **Opus and Sonnet only** — sonnet implements tickets, opus does everything else; haiku-tier models are refused.
 - **`--autoroles`** — derives roles from your project (README, layout, tests, git diff, stack) and asks you to confirm.
@@ -41,7 +41,7 @@ That's it — start (or restart) Claude Code and run `/team --help`.
 | | |
 |---|---|
 | Required | [Claude Code](https://code.claude.com), `python3`, and **[cmux](https://cmux.dev)** or **[ArcaTerm](https://github.com/databricks-eng/arcaterm)** (app 1.15+) for panes — whichever you run `/team` from (or use `--inline` for no panes) |
-| Build runs | `git`, an `origin` remote, [no-mistakes](https://github.com/kunchenguid/no-mistakes) (optional — without it, commits just stay local) |
+| Build runs | `git` |
 | Ticket runs | `git`, run-afk's tracker tools (`~/.claude/skills/run-afk/ralph/lib`, or `TEAM_TICKETS_LIB`), a tracker set up by `/setup-matt-pocock-skills`, and the `grill-with-docs`, `to-spec`, `to-tickets` skills invocable by the model when the lead plans the tickets |
 | Optional | [caveman](https://github.com/JuliusBrussee/caveman) installed at `~/.agents/skills/caveman` (skipped if absent) |
 
@@ -84,7 +84,7 @@ When you're done, say **"shut down the team"**.
 - **Cost scales with team size** — every teammate is a full Claude session. 2–3 sharp roles beat 5 vague ones.
 - **Tool-permission prompts appear in each teammate's own pane** (in cmux they are a known blind spot of the status pane; ArcaTerm reports them as waiting; see `/team --help`) — teammate *questions*, by contrast, are forwarded to the lead, who relays them to you in one place.
 - **First time in a folder**, each pane shows Claude's workspace-trust prompt (folders inside a trusted project are already trusted).
-- **Build runs publish** (push + PR per teammate); the lead always asks before spawning them. **Ticket runs land on your branch** (local commits; GitHub mode closes each issue as its slice lands); the lead asks you to approve the queue first.
+- **Build runs push nothing** (one branch per teammate for you to merge). **Ticket runs land on your branch** (local commits; GitHub mode closes each issue as its slice lands); the lead asks you to approve the queue first.
 - Tested on macOS with cmux. ArcaTerm (app 1.15.4, CLI 1.16.1) was tested live on a review run: split and `--tabs` spawns, the monitor pane, messages both ways, `list`/`status` (including `waiting`), `finish` and `close`; `reap`, `show` and `lead-title` are covered by `tests/team-arcaterm.sh` only, and build runs (`--worktree`) are not yet tested on ArcaTerm.
 
 ## License

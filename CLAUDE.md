@@ -28,7 +28,7 @@ quote it word-for-word — they never restate it in their own words.
 2. Grep the repo for the old wording and update or delete the copies.
 3. Run `bash team.sh doccheck` — it flags retired drift phrases
    (`inherit the lead`, `stacked`, `3–5`, `--tmux`, `tmux pane`, `tmux session`,
-   `tmux attach`, `team.sh park`, `superpowers:` and `dontAsk`), confirms every subcommand is documented in the `team.sh` header,
+   `tmux attach`, `team.sh park`, `superpowers:`, `dontAsk`, `no-mistakes`, `--no-gate` and `gate-init`), confirms every subcommand is documented in the `team.sh` header,
    and confirms every `--flag` in `SKILL.md`'s argument-hint is explained in `HELP.md`.
    Fix what it reports.
 
