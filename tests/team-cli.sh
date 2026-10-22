@@ -44,6 +44,7 @@ export PATH="$W/bin:$PATH"
 # Redirect registries to scratch dir (never touch /tmp/team-*.tabs of live projects)
 export TEAM_REG_DIR="$W/reg"
 unset TEAM_MEMBER   # inherited from a teammate pane it would make lead-title a no-op
+unset MACTERM_SESSION TEAM_BACKEND   # never reach the real arcaterm CLI (see tests/team-build.sh)
 mkdir -p "$W/reg"
 
 # 1. Unknown subcommands never reach the spawn path (which opens a real pane).

@@ -79,6 +79,9 @@ export PATH="$W/bin:$PATH"
 export CMUX_LOG CLAUDE_LOG
 # Run from inside a teammate pane TEAM_MEMBER is inherited and makes lead-title a no-op (rev4-3).
 unset TEAM_MEMBER
+# Run from an ArcaTerm pane, MACTERM_SESSION (or TEAM_BACKEND) would route a case that blanks the
+# CMUX_* vars to the real arcaterm CLI; tests/team-arcaterm.sh covers that backend with a stub.
+unset MACTERM_SESSION TEAM_BACKEND
 
 # ── Stub model list via HOME override ──
 mkdir -p "$W/home/.claude/team/roles"

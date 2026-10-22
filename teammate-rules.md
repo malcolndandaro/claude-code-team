@@ -37,6 +37,7 @@ the slowest teammate sets the pace for the whole team.
   no measured progress signal available, so this is *your* estimate: judge it against the
   whole task you were given, not the step you are on, and do not jump to 90% because the
   current step is nearly done. Use 100% only once your report is written.
+<!-- cmux-only -->
 - **Do web frontend / UI QA, review, and tests in the cmux integrated browser.** Whenever your
   work needs a rendered page (checking a UI change, reproducing a frontend bug, clicking
   through a flow, capturing visual evidence), drive it with `cmux browser`, not
@@ -67,6 +68,13 @@ the slowest teammate sets the pace for the whole team.
     (`--text "$PASSWORD"`) and never echo them into your report or status line.
   - Clean up before reporting: `cmux close-surface --surface surface:N` for every surface
     and tab you opened. If `cmux` is not available (--inline mode), say so in your report instead of switching tools quietly.
+<!-- /cmux-only -->
+<!-- arcaterm-only -->
+- **Web frontend / UI QA in ArcaTerm.** There is no integrated-browser rule here: when your
+  work needs a rendered page, use the browser tools your session has (e.g. a Playwright MCP),
+  close every page you opened before reporting, and name the tool in your report. A UI claim
+  without a snapshot, getter result, or screenshot saved under `<run>/evidence/` counts as unverified.
+<!-- /arcaterm-only -->
 - **Send questions to the lead, not your own pane.** When you need the user's input, a
   decision, or sign-off on an approach, do NOT use AskUserQuestion or wait silently in your
   pane — the user is not watching it. SendMessage the lead a message whose first line is
@@ -78,11 +86,18 @@ the slowest teammate sets the pace for the whole team.
 - **Leave your worktree clean before reporting.** On a build run the lead's `finish` refuses while
   your worktree has uncommitted changes, and untracked files count. Commit your work and commit
   or delete scratch files first, or your own pane cannot be closed.
-- **Notify when reporting or sending NEEDS INPUT.** Order for a report: write the report file,
-  tick your line in `tasks.md`, run `cmux notify`, and make the SendMessage to the lead your
-  **last** act — the lead finishes (closes) your pane on receiving it, so anything after it may
-  never run. Report: `cmux notify --title "<team>-<role>" --body "report ready" --desktop false`
+- **Make the SendMessage to the lead your last act.** Order for a report: write the report file,
+  tick your line in `tasks.md`, notify where your terminal has a rule for it, and make the
+  SendMessage to the lead your **last** act — the lead finishes (closes) your pane on receiving
+  it, so anything after it may never run.
+<!-- cmux-only -->
+- **Notify when reporting or sending NEEDS INPUT.** Report: `cmux notify --title "<team>-<role>" --body "report ready" --desktop false`
   (badge without a macOS banner; best-effort, cmux hooks can override it). Question:
   `cmux notify --title "<team>-<role>" --subtitle "<team>-<role>" --body "NEEDS INPUT: <one-line summary>"`
   (keeps the banner). Do not rely on the ring surviving your pane. Skip silently if cmux is not
   available (--inline mode).
+<!-- /cmux-only -->
+<!-- arcaterm-only -->
+- **No notify step in ArcaTerm.** ArcaTerm shows the lead whether you are working, idle, or
+  waiting on input from your session's own state; there is no command to run.
+<!-- /arcaterm-only -->

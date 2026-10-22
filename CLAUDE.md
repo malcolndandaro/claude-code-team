@@ -40,9 +40,11 @@ in CI or as a manual pre-push check so you keep the global hook.
 
 ## The full gate set
 
-`doccheck` is the doc guard only. Before merging a branch, run all five suites
+`doccheck` is the doc guard only. Before merging a branch, run all six suites
 from the main checkout with `TEAM_MEMBER` unset (an inherited value makes
-`rev4-3` fail for the wrong reason):
+`rev4-3` fail for the wrong reason). Each suite also unsets `MACTERM_SESSION` and
+`TEAM_BACKEND` (team-arcaterm.sh then sets its own, against an `arcaterm` stub), so a run
+from an ArcaTerm pane never reaches the real `arcaterm` CLI:
 
 ```
 bash -n team.sh lib/*.sh
@@ -52,6 +54,7 @@ bash tests/team-build.sh      # spawn/registry/close/reap
 bash tests/team-cli.sh        # secret regex, facts-lint
 bash tests/status-render.sh   # monitor frames, widths, colour gate
 bash tests/team-finish.sh     # finish guards, --resume, round baselines
+bash tests/team-arcaterm.sh   # the ArcaTerm backend: spawn grid, launcher, close/finish/reap, states
 bash team.sh facts-lint       # CHECK rows are expected when cited files changed
 ```
 

@@ -16,11 +16,11 @@ and writes the final synthesis.
     --model M        Force one model for every teammate (alias or full id); a haiku-tier id
                      puts every role in dontAsk and is refused on build runs.
                      Default: the lead picks a model per role (see Choosing models)
-    --tabs           One cmux tab per teammate instead of panes
+    --tabs           One tab per teammate instead of panes (cmux or ArcaTerm)
     --no-gate        Build runs: skip no-mistakes (commits stay local, no push/PR)
     --no-caveman     Teammates write normal prose instead of caveman terse style
     --autoclose      Close the team right after the final synthesis
-    --inline         No panes: teammates run as in-session subagents (no cmux required)
+    --inline         No panes: teammates run as in-session subagents (no cmux or ArcaTerm required)
     --no-monitor     Skip the auto-refreshing status pane that opens by default after the
                      teammates spawn. The pane shows each teammate's state, current step and
                      flags, with anything that needs you pinned at the top. Not counted toward
@@ -58,8 +58,8 @@ available it falls back through the chain (opus → sonnet → haiku) and exits 
 lead can see a lower tier was used; exit 3 means no model is available at any tier. Cheap-tier (haiku) teammates — and any model id that resolves to haiku tier (e.g. GLM /
 Kimi) — always run unattended in `dontAsk` mode with a per-teammate allowlist:
 Read/Glob/Grep, SendMessage, ListAgents, Bash restricted to `git status`/`ls`/`wc`/
-`team.sh facts-lint`/`cmux notify --title ...`, and Edit on their own report, tasks.md,
-and status file.
+`team.sh facts-lint`/`cmux notify --title ...` (cmux only), and Edit on their own report,
+tasks.md, and status file.
 `TEAM_PERMISSION_MODE` never applies to haiku tier.
 Denied tools show up in their report. Haiku tier is refused on build runs. Subagents
 launched by teammates default to Sonnet when available, unless the teammate specifies
@@ -140,10 +140,15 @@ On a new machine the shared library starts empty until you sync it.
 ## Where teammates appear
     In cmux (default)   Your tab splits: you on the left, teammates in a two-column
                         grid on the right; finished ones close.
-                        cmux is required for pane modes. Install: https://cmux.dev
+                        Pane modes need cmux or ArcaTerm. Install: https://cmux.dev
     cmux + --tabs       A new tab per teammate in the current workspace
+    In ArcaTerm         The same two-column split of your tab, titled <team>-<role>.
+                        ArcaTerm moves focus to a new split; the lead takes it back.
+    ArcaTerm + --tabs   A child tab of your tab per teammate
     --inline            No panes: teammates run as subagents inside your session.
-                        Works without cmux.
+                        Works without cmux or ArcaTerm.
+  The terminal is the one you run /team from: a cmux pane uses cmux, an ArcaTerm pane
+  ArcaTerm (TEAM_BACKEND=cmux|arcaterm forces one). A team stays in the terminal it started in.
 
 ## Progress (cmux sidebar)
 The lead workspace shows a live status pill and progress bar: phase (spawning /
@@ -157,6 +162,9 @@ reporting teammate's pane closes once it is finished — rely on the pill's `N/M
 The lead calls `team.sh sync <team>` to update the sidebar; `team.sh sync --clear <team>`
 removes it when the team closes. The status pane (see below) opens by default and is the
 detailed view; the sidebar is the glance view.
+ArcaTerm has no sidebar API and no notify command: there `sync` does nothing, and the
+status pane is the progress view. ArcaTerm's own tab status still shows each teammate as
+working, idle or needing input.
 
 ## Cleanup: team.sh reap [--yes] [--exclude <team>]
 At the start of every run the lead lists leftover teammates from earlier runs of
@@ -165,7 +173,8 @@ today: may be live in another lead session)" require extra care — you may want
 check before closing. Registries without a project root are left alone and counted
 in a summary line. You can also run `team.sh reap` at any time to see the list, or
 `team.sh reap --yes` to close without prompting. `--exclude <team>` skips the named
-team. Requires cmux; skipped under --inline.
+team. Teammates opened in the other terminal (cmux vs ArcaTerm) are listed as left
+alone and never closed; reap them from there. Requires cmux or ArcaTerm; skipped under --inline.
 
 ## Examples
     /team review PR #42 for security, performance and test coverage
@@ -180,9 +189,10 @@ team. Requires cmux; skipped under --inline.
   `show` it (brings its pane to the front and moves focus there). A finished teammate has
   no pane; ask the lead to resume it.
 - Teammate *tool-permission* prompts appear in *their* pane — approve them there.
-  **Known limitation:** a prompt produces no notification, so the status pane cannot flag
+  **Known limitation (cmux):** a prompt produces no notification, so the status pane cannot flag
   it. The teammate shows `WORKING` for about 10 minutes, then `STALLED?`. If a teammate has
   been quiet that long, ask the lead to `show` it (brings its pane to the front) before assuming a bug.
+  In ArcaTerm the prompt shows as `waiting` right away: ArcaTerm reports that the teammate needs input.
   (Haiku-tier teammates run in dontAsk mode and don't prompt; denied tools appear in
   their report.)
 - A teammate that needs your input or a decision forwards the question to the lead via
@@ -200,23 +210,26 @@ team. Requires cmux; skipped under --inline.
   four states below; the STEP column is dropped below 60 columns.
     waiting      AskUserQuestion notification detected — teammates must not use this;
                  `show` its pane and SendMessage it to send NEEDS INPUT to the lead instead.
+                 In ArcaTerm, also a tool-permission prompt waiting for you: `show` it first.
                  Not detected for haiku/dontAsk tier.
     model gone   Its model is no longer available — respawn with a different model
-    dead         Session exited — respawn it (a note says when its report is safe on disk)
+    dead         Session exited — respawn it (a note says when its report is safe on disk;
+                 in ArcaTerm a note also says when claude exited and left its pane open)
     stalled?     No status update for 10 minutes while mid-work. This is "no update in a
                  while", not "stuck": a teammate in a long hook or subagent wait looks the
                  same, so look at its pane before messaging it
     working      Doing its work (a note says "report on disk" once it has reported)
     idle         Turn ended with no report yet; routine while it waits on a peer or the lead,
                  so it is not pinned under NEEDS YOU (it becomes stalled? after 10 minutes)
-    unknown      Not opened in cmux, or cmux could not be queried, so its state cannot be read
+    unknown      Opened in another terminal, or the terminal could not be queried, so its
+                 state cannot be read
     finished     Reported, verified and closed by the lead
-  State is read from the hooks cmux injects into each *live* teammate, not from its screen.
-  A finished teammate has no surface, so its state comes from its report on disk and the
-  registry.
+  State is read from the terminal for each *live* teammate — the hooks cmux injects, or
+  ArcaTerm's agent status — not from its screen. A finished teammate has no surface, so its
+  state comes from its report on disk and the registry.
   The status pane opens automatically (unless `--no-monitor`) and repaints only when the
   frame changes, checking every 30 s (override with `TEAM_STATUS_INTERVAL`). It exits when
-  the team is closed. Requires cmux. Under `--inline` there is no registry and no pane; track
+  the team is closed. Requires cmux or ArcaTerm. Under `--inline` there is no registry and no pane; track
   teammates by their returned reports and tasks.md.
   In the pane each row is numbered: press that number to focus that teammate's pane, `r` to
   repaint, `q` to quit. Clicking a row does the same. Clicking captures the mouse, so
@@ -249,7 +262,7 @@ side's best evidence) · Dropped (refuted) · Next steps.
 - Non-haiku teammates start in auto permission mode (set TEAM_PERMISSION_MODE to override).
   Haiku-tier teammates always run unattended in dontAsk mode with a per-teammate allowlist
   (Read/Glob/Grep, SendMessage/ListAgents, Bash: git status/ls/wc/facts-lint/`cmux notify
-  --title ...`, Edit on own report+tasks.md+status); TEAM_PERMISSION_MODE has no effect on
+  --title ...` (cmux only), Edit on own report+tasks.md+status); TEAM_PERMISSION_MODE has no effect on
   haiku tier; they are refused on build runs.
 - The hard cap is 8 teammates (spawn refuses beyond it).
 - Cost: every teammate is a full Claude session with its own context window,

@@ -18,6 +18,7 @@ fails=0; passes=0
 pass() { echo "PASS  $1"; passes=$((passes+1)); }
 fail() { echo "FAIL  $1${2:+ — $2}"; fails=$((fails+1)); }
 unset TEAM_MEMBER NO_COLOR TEAM_FORCE_COLOR TEAM_COLS
+unset MACTERM_SESSION TEAM_BACKEND   # never reach the real arcaterm CLI (see tests/team-build.sh)
 
 # ── stub cmux: identify answers "gone" for refs listed in $CMUX_GONE_REFS; everything else is empty ──
 mkdir -p "$W/bin"

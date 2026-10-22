@@ -30,14 +30,20 @@
 # Module-level state (reset by each _st_table call):
 #   _ST_UUID_MAP   "surface:N=UUID\n…" built from cmux list-panes (one python3 call)
 #   _ST_NOTIF_DATA "UUID|title|subtitle\n…" from cmux list-notifications --json
+#   _ST_AT_PANES   _at_panes output (lib/arcaterm.sh): one ArcaTerm snapshot for every row
+#   _ST_AT_OK      1 when that snapshot was read (so a pane missing from it is gone, not unknown)
 #
-# FLAGS column note — WAITING covers AskUserQuestion only (title="Claude question").
+# FLAGS column note — in cmux, WAITING covers AskUserQuestion only (title="Claude question").
 # Tool-approval permission prompts go to `cmux hooks feed`, NOT list-notifications,
 # so a teammate blocked on a permission prompt shows no WAITING flag; STALLED? fires
 # after 10 min of filesystem silence. This is a known gap (probed by rev4-tests).
+# ArcaTerm has no such gap: its agent status `needs-input` covers both a question and a
+# tool-approval prompt (ArcaTerm docs/agent-status.md), and it maps to WAITING.
 
 _ST_UUID_MAP=
 _ST_NOTIF_DATA=
+_ST_AT_PANES=
+_ST_AT_OK=
 
 # Shared palette (decision 16): the sidebar pill and the monitor pane use the same
 # four roles. None is "#4C8DFF" — `cmux set-status --help` documents that hex as the
@@ -111,8 +117,8 @@ fi
 #   FINISHED    col 9 is rev5-core's `finished` marker — the only "finished on
 #               purpose" signal (surface-health omits closed surfaces, and a report on
 #               disk alone is also true mid-flight and in round 2)
-#   UNKNOWN     not a cmux row, or liveness unknown: never rendered as alive
-#   DEAD        surface gone without the marker
+#   UNKNOWN     not a cmux/arcaterm row, or liveness unknown: never rendered as alive
+#   DEAD        surface gone without the marker (ArcaTerm: also a pane whose claude session exited)
 #   MODEL_GONE  model (or subagent model) no longer offered
 #   WAITING     newest notification is an AskUserQuestion ("Claude question")
 #   STALLED     mid-work milestone, no status/report write for >=10 min
@@ -123,7 +129,7 @@ fi
 _st_state() {
   local fin=$1 backend=$2 alive=$3 gone=$4 waiting=$5 idle=$6 stalled=$7
   if [ -n "$fin" ]; then echo FINISHED
-  elif [ "$backend" != cmux ] || [ -z "$alive" ]; then echo UNKNOWN
+  elif { [ "$backend" != cmux ] && [ "$backend" != arcaterm ]; } || [ -z "$alive" ]; then echo UNKNOWN
   elif [ "$alive" != 1 ]; then echo DEAD
   elif [ -n "$gone" ]; then echo MODEL_GONE
   elif [ -n "$waiting" ]; then echo WAITING
@@ -131,6 +137,14 @@ _st_state() {
   elif [ -n "$idle" ]; then echo IDLE
   else echo WORKING
   fi
+}
+
+# _st_unattended <model>: 0 when the model runs unattended (haiku tier gets dontAsk), so it never
+# waits on a human and a WAITING flag would be noise.
+_st_unattended() {
+  case "${1:-}" in *haiku*|*glm*|*kimi*) return 0 ;; esac
+  declare -f _model_tier >/dev/null 2>&1 || return 1
+  [ "$(_model_tier "${1:-}" 2>/dev/null || true)" = haiku ]
 }
 
 # ---------------------------------------------------------------------------
@@ -264,11 +278,7 @@ _st_row() {
         #     Permission prompts cannot be detected via notifications; a teammate
         #     blocked on one surfaces only as STALLED after 10 min of silence.
         local skip_waiting=
-        case "${mdl:-}" in *haiku*|*glm*|*kimi*) skip_waiting=1 ;; esac
-        if [ -z "$skip_waiting" ] && declare -f _model_tier >/dev/null 2>&1; then
-          local tier; tier=$(_model_tier "${mdl:-}" 2>/dev/null || true)
-          [ "$tier" = haiku ] && skip_waiting=1
-        fi
+        _st_unattended "${mdl:-}" && skip_waiting=1
         if [ -n "$_ST_UUID_MAP" ] && [ -n "$_ST_NOTIF_DATA" ]; then
           local uuid
           uuid=$(awk -F'=' -v r="$ref" '$1==r {print $2; exit}' <<<"$_ST_UUID_MAP" 2>/dev/null || true)
@@ -293,11 +303,33 @@ _st_row() {
     fi
   fi
 
+  # ArcaTerm: liveness, WAITING and IDLE from the pane's agent status, read once per frame in
+  # _st_records. `unread` is idle with output nobody has looked at yet; `checking` is a pane ArcaTerm
+  # is still identifying (just spawned), so it counts as working; `unavailable` means ArcaTerm cannot
+  # observe the pane (UNKNOWN); `stopped` means the claude session is gone and only a shell is left.
+  local exited=
+  if [ -z "$fin" ] && [ "$backend" = arcaterm ] && [ -n "$_ST_AT_OK" ]; then
+    local atl ast
+    atl=$(awk -F'\t' -v x="$ref" '$1==x {print; exit}' <<<"$_ST_AT_PANES")
+    ast=$(cut -f5 <<<"$atl")
+    if [ -z "$atl" ]; then alive=0
+    else
+      case $ast in
+        stopped) alive=0; exited=1 ;;
+        unavailable) alive= ;;
+        *) alive=1 ;;
+      esac
+      if [ "$ast" = needs-input ] && ! _st_unattended "${mdl:-}"; then waiting=1; fi
+      case $ast in idle|unread) [ "$ms" != reported ] && idle=1 ;; esac
+    fi
+  fi
+
   local state; state=$(_st_state "$fin" "$backend" "$alive" "$gone" "$waiting" "$idle" "$stalled")
 
   # Notes: context a token alone cannot carry
   local note=
   if [ -n "$parked" ] && [ "$state" = WORKING ]; then note="in the lead's pane"
+  elif [ "$state" = DEAD ] && [ -n "$exited" ]; then note="claude exited; its pane is still open"
   elif [ "$state" = WORKING ] && [ "$ms" = reported ]; then note="report on disk"
   elif [ "$state" = DEAD ] && [ -n "$rpt" ] && [ -f "$rpt" ]; then note="report safe; resume unavailable"
   fi
@@ -336,6 +368,14 @@ try:
 except Exception:
     pass
 " 2>/dev/null || true)
+  fi
+
+  # ArcaTerm rows: one snapshot serves every row this frame (lib/arcaterm.sh). Read only when the
+  # registry has an arcaterm row and the CLI is here, so a cmux team never calls it.
+  _ST_AT_PANES= _ST_AT_OK=
+  if awk '$1=="arcaterm"{f=1} END{exit !f}' "$reg" 2>/dev/null \
+      && command -v arcaterm >/dev/null && declare -F _at_panes >/dev/null; then
+    _ST_AT_PANES=$(_at_panes 2>/dev/null) && _ST_AT_OK=1 || _ST_AT_PANES=
   fi
 
   # Build team UUID set from registry refs (used to filter notification data).
@@ -800,6 +840,8 @@ sub_status() {
       sleep "${TEAM_MONITOR_CLOSE_GRACE:-4}"
       if [ -n "${CMUX_SURFACE_ID:-}" ] && command -v cmux >/dev/null 2>&1; then
         cmux close-surface --force --surface "$CMUX_SURFACE_ID" >/dev/null 2>&1 || true
+      elif [ -n "${MACTERM_SESSION:-}" ] && command -v arcaterm >/dev/null 2>&1; then
+        arcaterm pane close --session "$MACTERM_SESSION" --force >/dev/null 2>&1 || true
       fi
       return 0
     fi
@@ -879,15 +921,17 @@ _st_focus_role() {
 # ---------------------------------------------------------------------------
 # sub_monitor <team>
 # Opens one auto-refreshing status pane with layout=dash (not a teammate).
-# Requires cmux with workspace context (_require_cmux ws).
-# Exit: 0 ok, 1 already-running, 3 cmux unavailable
+# Requires cmux with workspace context, or an ArcaTerm pane (_require_term ws).
+# Exit: 0 ok, 1 already-running, 3 terminal unavailable
 # ---------------------------------------------------------------------------
 
 sub_monitor() {
   local team=${1:?team}
 
-  # cmux with workspace context is a hard requirement (decision 1)
-  _require_cmux ws
+  # A terminal with pane context is a hard requirement (decision 1)
+  if declare -F _require_term >/dev/null; then _require_term ws; else _require_cmux ws; fi
+  local be=cmux
+  if declare -F _backend >/dev/null; then be=$(_backend); fi
 
   local reg; reg=$(_reg "$team")
   local interval=${TEAM_STATUS_INTERVAL:-30}
@@ -936,10 +980,19 @@ sub_monitor() {
   local cmd="TEAM_LEAD_PANE=$lead_pane_q TEAM_STATUS_INTERVAL=$interval bash $script_q status --watch $team_q"
 
   local out ref
-  out=$(cmux new-split down --surface "$CMUX_SURFACE_ID" \
-        --command "$cmd" --focus false)
-  ref=$(awk '{print $2}' <<<"$out")
-  cmux rename-tab --surface "$ref" "$title" >/dev/null
+  if [ "$be" = arcaterm ]; then
+    # ArcaTerm types --run into the new shell: a launcher keeps it to `bash <file>` (lib/arcaterm.sh).
+    local launcher; launcher="$(dirname "$reg")/team-$team-monitor.launch.sh"
+    _at_launcher "$launcher" "$title" "$cmd"
+    out=$(_at_open split - down "$launcher") \
+      || { printf 'monitor: ArcaTerm did not open a pane\n' >&2; return 1; }
+    ref=${out%% *}
+  else
+    out=$(cmux new-split down --surface "$CMUX_SURFACE_ID" \
+          --command "$cmd" --focus false)
+    ref=$(awk '{print $2}' <<<"$out")
+    cmux rename-tab --surface "$ref" "$title" >/dev/null
+  fi
   _reg_add "$team" "$ref" dash "$title" - - -
   printf 'monitor pane: %s\n' "$title"
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run each teammate as an interactive `claude` session in its own cmux pane or tab.
+# Run each teammate as an interactive `claude` session in its own cmux or ArcaTerm pane or tab.
 #   team.sh spawn [--tabs] [--worktree] [--replace] [--resume] [--no-caveman] <team> <role> <prompt-file> [model]
 #                         --resume: continue the session id recorded for <team>-<role> (normally a finished row)
 #                         in its recorded cwd, with <prompt-file> as the new instruction; exit 3 when no session
@@ -8,15 +8,16 @@
 #                            its row (a reused ref is skipped, row dropped) and drops finished rows (the team is over);
 #                            exit 1 (rows kept for a retry) if one could not be closed
 #   team.sh init <team>   -> creates .team/ (idempotent) + a run dir; prints the run dir path
-#   team.sh lead-title    -> renames the lead's cmux workspace and tab to "Main Board - <project>"
+#   team.sh lead-title    -> renames the lead's cmux workspace and tab (ArcaTerm: its tab) to "Main Board - <project>"
 #                            (project = basename of the main checkout); idempotent; a no-op inside a teammate
 #   team.sh reap [--yes] [--exclude <team>]  -> live teammates left over from earlier teams of THIS project
 #                            (every registry, scoped by the project root in each row). Without --yes it only
-#                            lists them, one "<team>  <title>  cmux <ref>  run <run-dir name>" line each, marked when
+#                            lists them, one "<team>  <title>  <backend> <ref>  run <run-dir name>" line each, marked when
 #                            the run started today (may be live in another lead session); --yes closes them and
 #                            clears each fully reaped team's sidebar pill (the progress bar is per workspace, so
 #                            that also clears the caller's bar: run reap at step 0, before the new team syncs).
 #                            Rows of other projects are never shown or touched; live rows with no root (legacy) are only counted, never named or closed.
+#                            Rows opened in the other terminal (a cmux row seen from ArcaTerm, or the reverse) are kept, never closed.
 #                            exit 1 if one could not be closed
 #   team.sh gate-init     -> sets up the no-mistakes gate for this repo (needs an "origin" remote)
 #   team.sh clean <team>  -> removes the team's worktrees that have no uncommitted changes (branches kept)
@@ -29,10 +30,11 @@
 #   (only refs still of type browser; best-effort: a failure warns, keeps the ref for a retry, never changes the exit code)
 #   team.sh show <team> <role>  -> bring a teammate's pane to the front and focus it (a --tabs teammate is first
 #                                  moved out of your pane into its own); exit 3 finished, gone or not recorded,
-#                                  exit 1 cmux could not resolve its pane (it may still be running)
+#                                  exit 1 cmux could not resolve its pane (it may still be running), or ArcaTerm could
+#                                  not focus it (pane focus works only on the Mac)
 #   team.sh list <team>         -> each teammate: working (<pane>) / tab (in your pane, running) / finished / dead
-#                                  (cmux says not found) / unknown (not a cmux row, or cmux gave no answer); MODEL_GONE
-#                                  when its model left the picker
+#                                  (cmux says not found; ArcaTerm: pane gone, or its claude session exited) / unknown
+#                                  (a row of the other terminal, or no answer); MODEL_GONE when its model left the picker
 #   team.sh models              -> models available here, best tier first
 #   team.sh pick-model <tier>   -> newest claude-* model id for opus|sonnet|haiku; exit 1 = fell back a tier
 #                                  (warning on stderr), 2 = bad tier, 3 = nothing matches
@@ -53,8 +55,10 @@
 #                                             <team>-monitor; not a teammate, not in the cap; `close` closes it).
 #                                             exit 1 already running
 #   team.sh sync [--clear] <team>          -> lead sidebar status pill + progress bar and a `cmux log --source team`
-#                                             event; --clear removes both. Best-effort (warns, never fails the caller)
-#   (role, roles, role-pull, role-promote live in lib/roles.sh; status, monitor, sync in lib/status.sh)
+#                                             event; --clear removes both. Best-effort (warns, never fails the caller).
+#                                             A no-op in ArcaTerm, which has no sidebar API (the monitor pane shows progress)
+#   (role, roles, role-pull, role-promote live in lib/roles.sh; status, monitor, sync in lib/status.sh;
+#    the ArcaTerm pane calls in lib/arcaterm.sh)
 #   team.sh facts-lint [--pre-append <file>]  -> freshness of .team/facts.md facts (FRESH/CHECK/GONE/NOANCHOR + DUP); --pre-append scans <file> for secrets
 #   team.sh doccheck            -> doc drift guard: retired phrases, subcommands documented, SKILL flags present in HELP
 #   team.sh --help              -> prints this header. Any other unknown subcommand exits 2 (it never falls through to spawn).
@@ -63,9 +67,16 @@
 # 5 role-promote/role-pull direction refused.
 # .team/ always means the MAIN checkout's .team/, also when run from inside a linked worktree.
 # Needs python3 (models, pick-model, spawn, close, finish, reap, show/list); those subcommands exit 3 without it.
-# Needs cmux >= 0.65.0, answering `cmux ping` (spawn, close, finish, reap, lead-title, show/list, monitor); those exit 3
-# with an install hint without it. spawn, lead-title, show/list and monitor must also run inside a cmux pane
-# ($CMUX_WORKSPACE_ID and $CMUX_SURFACE_ID set). init, status, roles, models and the facts/doc checks need no cmux.
+# Needs a terminal backend for spawn, close, finish, reap, lead-title, show/list and monitor; those exit 3 without it.
+# The backend is picked per call: TEAM_BACKEND=cmux|arcaterm wins; else cmux inside a cmux pane ($CMUX_SURFACE_ID
+# set), else ArcaTerm inside an ArcaTerm pane ($MACTERM_SESSION set), else cmux (for its install hint).
+#   cmux: >= 0.65.0, answering `cmux ping`. spawn, lead-title, show/list and monitor must also run inside a cmux pane
+#     ($CMUX_WORKSPACE_ID and $CMUX_SURFACE_ID set).
+#   ArcaTerm: app >= 1.15.0, `arcaterm version --json` reporting it connected. spawn, lead-title, show/list and
+#     monitor must also run inside an ArcaTerm pane ($MACTERM_SESSION set). No sidebar (sync is a no-op), no
+#     `notify`, no integrated-browser rules for teammates.
+# A row records the backend that opened it (col 1); close, finish and reap act only on rows of the current backend.
+# init, status, roles, models and the facts/doc checks need no terminal.
 # TEAM_MODELS_FILE: read the model picker (and the default "model") from this JSON file instead of
 # managed-settings/settings.json.
 # --worktree: the teammate works in its own git worktree .team/worktrees/<team>-<role>
@@ -89,10 +100,13 @@
 # Every teammate runs with CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=4, and with
 # CLAUDE_CODE_SUBAGENT_MODEL=<newest sonnet> when `pick-model sonnet` finds one exactly (omitted on fallback).
 # Layout: default splits the lead's tab -- teammates fill a two-column grid to the right of the lead.
-# --tabs: one tab per teammate in the lead's workspace instead. --tmux was removed (cmux only): exit 2.
+# --tabs: one tab per teammate in the lead's workspace (ArcaTerm: a child tab of the lead's tab) instead.
+# --tmux was removed (cmux or ArcaTerm only): exit 2.
+# ArcaTerm types the launch command into the new pane's shell, so spawn writes it to
+# $TEAM_REG_DIR/team-<team>-<role>.launch.sh (it also sets the pane title) and types only `bash <that file>`.
 # Permission mode: a haiku-tier model (by resolved tier, so any id that behaves as haiku) always
 # gets --permission-mode dontAsk plus a per-teammate allowlist: Read/Glob/Grep, SendMessage,
-# `git status` (diff/log/show can write via --output), ls/wc, `team.sh facts-lint`, `cmux notify --title ...`, and Edit on exactly its
+# `git status` (diff/log/show can write via --output), ls/wc, `team.sh facts-lint`, `cmux notify --title ...` (cmux only), and Edit on exactly its
 # <run>/reports/<role>.md, <run>/tasks.md and <run>/status/<role>.txt (<run> = parent of the
 # prompt file's prompts/ dir, which a haiku-tier prompt must live in). Haiku tier is refused with
 # --worktree. With no [model], the tier is that of the default model the teammate starts on
@@ -100,7 +114,7 @@
 # default gets the same treatment. Every other tier uses TEAM_PERMISSION_MODE (default auto).
 # Spawned tabs/panes are recorded in $TEAM_REG_DIR/team-<team>.tabs (default /tmp; tests point it at a
 # scratch dir so they never read or rewrite live registries), one row each (written by _reg_add):
-# "cmux <ref> <layout:pane|tab|dash> <title> <model|-> <subagent-model|-> <run-dir|-> <project-root>
+# "<backend:cmux|arcaterm> <ref> <layout:pane|tab|dash> <title> <model|-> <subagent-model|-> <run-dir|-> <project-root>
 #  <state:live|finished> <session-id|-> <cwd>". <state> is `finished` once `finish` closed the teammate on
 # purpose: such a row is kept by prune and reap (only `close`, which ends the team, drops it), holds no cap
 # slot and does not block a respawn; it is the record a resume reads its session id and cwd from. Rows older than rev5 stop at
@@ -226,12 +240,18 @@ _pane_of() {
     | python3 -c 'import json,sys; c=json.load(sys.stdin).get("caller") or {}; print(c.get("pane_ref") or "gone")' 2>/dev/null \
     || echo gone
 }
-# "<pane_ref> <surface_ref>" of the calling session (the lead), or empty.
+# "<pane_ref> <surface_ref>" of the calling session (the lead), or empty. ArcaTerm has no surfaces
+# inside panes, so there both are the caller's pane id.
 _lead_pane() {
   # TEAM_LEAD_PANE overrides discovery: inside the monitor pane `cmux identify`
   # would resolve the monitor itself as the lead, so `show` dispatched from the
   # monitor's key handler would focus into the wrong pane.
   if [ -n "${TEAM_LEAD_PANE:-}" ]; then printf '%s\n' "$TEAM_LEAD_PANE"; return 0; fi
+  if [ "$(_backend)" = arcaterm ]; then
+    local s; s=$(_at_self)
+    [ -z "$s" ] || echo "${s%% *} ${s%% *}"
+    return 0
+  fi
   cmux identify 2>/dev/null \
     | python3 -c 'import json,sys; c=json.load(sys.stdin).get("caller") or {}; print(c.get("pane_ref") or "", c.get("surface_ref") or "")' 2>/dev/null || true
 }
@@ -248,8 +268,21 @@ import json, sys
 try: c = json.load(sys.stdin).get("caller")
 except Exception: sys.exit(0)
 sys.exit(1 if isinstance(c, dict) and not c.get("pane_ref") else 0)' ;;
+    arcaterm)
+      # Gone only when the snapshot was read and the pane is not in it.
+      command -v arcaterm >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 || return 0
+      out=$(_at_panes) || return 0
+      [ -n "$(_at_line "$2" "$out")" ] ;;
     *) return 0 ;;   # legacy tmux rows: tmux support is gone, never prune them blind
   esac
+}
+# The terminal this call runs in (see the header): TEAM_BACKEND wins, then a cmux pane, then an
+# ArcaTerm pane, else cmux, so running outside both still gets cmux's install hint.
+_backend() {
+  if [ -n "${TEAM_BACKEND:-}" ]; then echo "$TEAM_BACKEND"
+  elif [ -n "${CMUX_SURFACE_ID:-}${CMUX_WORKSPACE_ID:-}" ]; then echo cmux
+  elif [ -n "${MACTERM_SESSION:-}" ]; then echo arcaterm
+  else echo cmux; fi
 }
 # Pane commands need a live cmux: fail fast (exit 3) with an install hint instead of opening
 # nothing. `ws`: also require running inside a cmux pane (the lead's workspace and surface).
@@ -266,6 +299,27 @@ _require_cmux() {
   [ "${1:-}" != ws ] || { [ -n "${CMUX_WORKSPACE_ID:-}" ] && [ -n "${CMUX_SURFACE_ID:-}" ]; } || {
     echo "team.sh: '$sub' must run inside a cmux pane (CMUX_WORKSPACE_ID/CMUX_SURFACE_ID are unset)." >&2; exit 3; }
 }
+# The same check for whichever backend this call runs in (_backend).
+_require_term() {
+  case $(_backend) in
+    cmux) _require_cmux "$@" ;;
+    arcaterm)
+      declare -F _at_require >/dev/null || { echo "team.sh: '$sub' needs $here/lib/arcaterm.sh, which is missing" >&2; exit 3; }
+      _at_require "$@" ;;
+    *) echo "team.sh: TEAM_BACKEND must be cmux or arcaterm, not '$TEAM_BACKEND'" >&2; exit 2 ;;
+  esac
+}
+# Force-close <ref> of backend $1 (a running teammate needs the force). 0 closed or already gone;
+# otherwise the reason on stdout and 1, so callers keep the row for a retry.
+_term_close() {
+  local err
+  case $1 in
+    arcaterm) _at_close "$2" ;;
+    *) err=$(cmux close-surface --surface "$2" --force 2>&1 >/dev/null) && return 0
+       case $err in *not_found*) return 0 ;; esac
+       printf '%s\n' "$err"; return 1 ;;
+  esac
+}
 # The lead's name in the workspace title, its tab title and the Claude session name.
 _lead_title() { echo "Main Board - $(basename "$(_root)")"; }
 # The one writer of registry rows: <ref> <layout> <title> <model|-> <submodel|-> <rundir|-> <session-id|-> <cwd>,
@@ -274,7 +328,7 @@ _lead_title() { echo "Main Board - $(basename "$(_root)")"; }
 # spaces still reads whole (`read ... cwd`), and it is where the session's transcript is keyed.
 _reg_add() {
   local team=$1; shift
-  echo "cmux $1 $2 $3 $4 $5 $6 $(_root) live ${7:--} ${8:--}" >> "$(_reg "$team")"
+  echo "$(_backend) $1 $2 $3 $4 $5 $6 $(_root) live ${7:--} ${8:--}" >> "$(_reg "$team")"
 }
 # 0 when a registry row (whole line) carries the terminal marker: its teammate was finished on purpose
 # (`team.sh finish`), its pane is gone by design, and the row holds the session id to resume from.
@@ -305,6 +359,20 @@ def walk(o):
     elif isinstance(o, list):
         for v in o: walk(v)
 walk(json.load(sys.stdin))'
+}
+# _surface_titles for backend $1. A live ArcaTerm pane reads as title "@live": its UUID is never
+# reused, so there is no stale ref to guard against and _live_title answers with the row's own title.
+_term_titles() {
+  case $1 in
+    arcaterm) _at_panes | awk -F'\t' -v OFS='\t' '{print $1, "@live", $4}' ;;
+    *) _surface_titles ;;
+  esac
+}
+# The live title of ref $2 in _term_titles output $1, or nothing when it is gone ($3: the row's title).
+_live_title() {
+  local cur; cur=$(awk -F'\t' -v x="$2" '$1==x {print $2; exit}' <<<"$1")
+  [ "$cur" != @live ] || cur=$3
+  printf '%s' "$cur"
 }
 # Close the browser surfaces a teammate recorded in <run-dir>/browser/<role>.txt, one ref per line
 # (teammate-rules.md has it append every `cmux browser open` / `tab new` ref there), so a teammate
@@ -375,7 +443,7 @@ _mates() { [ -f "$1" ] || return 0; awk '($3=="pane" || $3=="tab") && $9!="finis
 
 # Libraries: functions only (sub_<name> per subcommand), sourced after the helpers they use,
 # so a missing lib only disables its own subcommands.
-for _lib in "$here/lib/roles.sh" "$here/lib/status.sh"; do
+for _lib in "$here/lib/roles.sh" "$here/lib/status.sh" "$here/lib/arcaterm.sh"; do
   # shellcheck source=/dev/null
   if [ -f "$_lib" ]; then . "$_lib"; fi
 done
@@ -431,10 +499,17 @@ fi
 # the focused one. A teammate shares the lead's workspace, so a call from one (TEAM_MEMBER set) is a no-op.
 if [ "$sub" = lead-title ]; then
   [ -z "${TEAM_MEMBER:-}" ] || { echo "lead-title: skipped inside teammate $TEAM_MEMBER (only the lead renames)"; exit 0; }
-  _require_cmux ws
+  _require_term ws
   t=$(_lead_title)
-  cmux rename-workspace --workspace "$CMUX_WORKSPACE_ID" -- "$t" >/dev/null
-  cmux rename-tab --surface "$CMUX_SURFACE_ID" -- "$t" >/dev/null
+  if [ "$(_backend)" = arcaterm ]; then
+    # Only the tab: an ArcaTerm group holds the user's other tabs too, so it is never renamed.
+    me=$(_at_self)
+    [ -n "$me" ] || { echo "lead-title: ArcaTerm did not resolve this pane (MACTERM_SESSION=$MACTERM_SESSION)" >&2; exit 1; }
+    _at_rename_tab "$t" "${me#* }"
+  else
+    cmux rename-workspace --workspace "$CMUX_WORKSPACE_ID" -- "$t" >/dev/null
+    cmux rename-tab --surface "$CMUX_SURFACE_ID" -- "$t" >/dev/null
+  fi
   echo "$t"
   exit 0
 fi
@@ -451,9 +526,10 @@ if [ "$sub" = reap ]; then
     --exclude) excl=${2:?--exclude <team>}; shift 2 ;;
     *) echo "usage: team.sh reap [--yes] [--exclude <team>]" >&2; exit 2 ;;
   esac; done
-  _require_cmux; _need_py
+  _require_term; _need_py
+  be=$(_backend)
   me=$(cd -P "$(_root)" && pwd)
-  titles=$(_surface_titles) || { echo "reap: could not read the cmux surface tree; nothing done" >&2; exit 1; }
+  titles=$(_term_titles "$be") || { echo "reap: could not read the $be pane list; nothing done" >&2; exit 1; }
   _lead=$(_lead_pane); leadsurface=${_lead##* }
   today=$(date +%Y-%m-%d)
   rc=0 found=0 unknown=0 dir=$(_reg_dir)
@@ -475,8 +551,8 @@ if [ "$sub" = reap ]; then
       [ -n "${r:-}" ] || continue
       root=$(_row_root "${rd:-}" "${rt:-}")
       [ -z "$root" ] || [ "$root" = "$me" ] || continue   # another project: never shown
-      cur=$(awk -F'\t' -v x="$r" '$1==x {print $2; exit}' <<<"$titles")
-      live=; [ "$b" = cmux ] && [ -n "$cur" ] && [ "$cur" = "$title" ] && [ "$r" != "$leadsurface" ] && live=1
+      cur=$(_live_title "$titles" "$r" "$title")
+      live=; [ "$b" = "$be" ] && [ -n "$cur" ] && [ "$cur" = "$title" ] && [ "$r" != "$leadsurface" ] && live=1
       if [ -z "$ours" ]; then
         # No (or mixed) project root: may well belong to another project, so only count it.
         [ -z "$live" ] || unknown=$((unknown+1))
@@ -484,17 +560,20 @@ if [ "$sub" = reap ]; then
       fi
       # A finished teammate has no pane to close; its row holds the session id, so it is kept.
       if _finished "$row"; then keep+="$row"$'\n'; continue; fi
+      # Opened in the other terminal (cmux vs ArcaTerm): this one cannot see it, so it is never dropped.
+      case $b in cmux|arcaterm) if [ "$b" != "$be" ]; then
+        echo "$t  $title  $b $r  left alone (opened in $b; reap it from there)"; keep+="$row"$'\n'; held=1; continue
+      fi ;; esac
       [ -n "$live" ] || continue   # gone or ref reused: the row is stale and dropped on --yes
       found=1
       # The run dir name tells an earlier run from one another lead session started today.
       run=-; case ${rd:-} in */.team/runs/*) run=$(basename "$rd") ;; esac
       note=; case $run in "$today"-*) note=" (run started today: may be live in another lead session)" ;; esac
-      if [ -z "$yes" ]; then echo "$t  $title  cmux $r  run $run$note"; keep+="$row"$'\n'; held=1; continue; fi
-      err=$(cmux close-surface --surface "$r" --force 2>&1 >/dev/null) && err=
-      case $err in *not_found*) err= ;; esac
-      if [ -z "$err" ]; then echo "$t  $title  cmux $r  closed"; rm -f "$dir/team-$t-${title#"$t"-}.round"
+      if [ -z "$yes" ]; then echo "$t  $title  $b $r  run $run$note"; keep+="$row"$'\n'; held=1; continue; fi
+      err=$(_term_close "$b" "$r") && err=
+      if [ -z "$err" ]; then echo "$t  $title  $b $r  closed"; rm -f "$dir/team-$t-${title#"$t"-}.round"
         _close_browsers "${rd:--}" "${title#"$t"-}" "$titles"
-      else echo "$t  $title  cmux $r  could not close: $err" >&2; keep+="$row"$'\n'; held=1; failed=1; fi
+      else echo "$t  $title  $b $r  could not close: $err" >&2; keep+="$row"$'\n'; held=1; failed=1; fi
     done < "$reg"
     [ -n "$yes" ] && [ -n "$ours" ] || continue
     # Rewrite our registry under its lock (subshell: _lock's EXIT trap releases it per registry).
@@ -532,9 +611,10 @@ fi
 if [ "$sub" = close ]; then
   team=${1:?team}; reg=$(_reg "$team")
   [ -f "$reg" ] || { echo "no tabs recorded for $team"; exit 0; }
-  _require_cmux; _need_py
+  _require_term; _need_py
+  be=$(_backend)
   _lock "$reg"
-  titles=$(_surface_titles) || { echo "close: could not read the cmux surface tree; nothing closed" >&2; exit 1; }
+  titles=$(_term_titles "$be") || { echo "close: could not read the $be pane list; nothing closed" >&2; exit 1; }
   # Teammates are live claude sessions, and cmux refuses to close a surface with a
   # running process unless forced. A pane that is already gone counts as closed, and so does
   # a ref now held by a surface with another title (the ref was reused: never close it);
@@ -548,14 +628,19 @@ if [ "$sub" = close ]; then
     rm -f "$(_reg_dir)/team-$team-${title#"$team"-}.round"
     _close_browsers "${rd:--}" "${title#"$team"-}" "$titles"
     if _finished "$row"; then echo "dropped finished $title (no pane)"; continue; fi
-    if [ "$backend" != cmux ]; then echo "dropped $backend $id ($title): only cmux panes are closed now; close it by hand"; continue; fi
-    cur=$(awk -F'\t' -v x="$id" '$1==x {print $2; exit}' <<<"$titles")
-    if [ -z "$cur" ]; then echo "closed cmux $id (already gone)"; continue; fi
-    if [ "$cur" != "$title" ]; then echo "skipped cmux $id: now titled '$cur', not '$title' (ref reused); row dropped"; continue; fi
-    err=$(cmux close-surface --surface "$id" --force 2>&1 >/dev/null) && err=
-    case $err in *not_found*) err= ;; esac
-    if [ -z "$err" ]; then echo "closed cmux $id"
-    else echo "could not close cmux $id: $err" >&2; keep+="$row"$'\n'; fi
+    case $backend in
+      cmux|arcaterm) if [ "$backend" != "$be" ]; then
+        echo "kept $backend $id ($title): opened in $backend, which this $be pane cannot close; run close from $backend" >&2
+        keep+="$row"$'\n'; continue
+      fi ;;
+      *) echo "dropped $backend $id ($title): only cmux and ArcaTerm panes are closed now; close it by hand"; continue ;;
+    esac
+    cur=$(_live_title "$titles" "$id" "$title")
+    if [ -z "$cur" ]; then echo "closed $backend $id (already gone)"; continue; fi
+    if [ "$cur" != "$title" ]; then echo "skipped $backend $id: now titled '$cur', not '$title' (ref reused); row dropped"; continue; fi
+    err=$(_term_close "$backend" "$id") && err=
+    if [ -z "$err" ]; then echo "closed $backend $id"
+    else echo "could not close $backend $id: $err" >&2; keep+="$row"$'\n'; fi
   done < "$reg"
   # Clear the lead sidebar pill/progress for this team (lib/status.sh); best-effort.
   if declare -F sub_sync >/dev/null; then sub_sync --clear "$team" || true; fi
@@ -651,7 +736,8 @@ fi
 if [ "$sub" = finish ]; then
   team=${1:?usage: team.sh finish <team> <role>} role=${2:?usage: team.sh finish <team> <role>}
   title="$team-$role" reg=$(_reg "$team")
-  _need_py; _require_cmux
+  _need_py; _require_term
+  be=$(_backend)
   [ -f "$reg" ] || { echo "finish: no teammates recorded for $team" >&2; exit 3; }
   _lock "$reg"
   n=$(awk -v t="$title" '$4==t && ($3=="pane" || $3=="tab") {n=NR} END{print n+0}' "$reg")
@@ -700,18 +786,19 @@ if [ "$sub" = finish ]; then
     echo "$title was already finished; retrying the close"
   fi
   rc=0
-  if [ "$b" = cmux ]; then
-    titles=$(_surface_titles) || { echo "finish: could not read the cmux surface tree; row is finished, re-run finish to close the pane" >&2; exit 1; }
-    cur=$(awk -F'\t' -v x="$ref" '$1==x {print $2; exit}' <<<"$titles")
+  if [ "$b" = "$be" ]; then
+    titles=$(_term_titles "$be") || { echo "finish: could not read the $be pane list; row is finished, re-run finish to close the pane" >&2; exit 1; }
+    cur=$(_live_title "$titles" "$ref" "$title")
     if [ -z "$cur" ]; then echo "pane $ref already gone"
     elif [ "$cur" != "$title" ]; then echo "pane $ref now titled '$cur', not '$title' (ref reused); not closed"
     else
-      err=$(cmux close-surface --surface "$ref" --force 2>&1 >/dev/null) && err=
-      case $err in *not_found*) err= ;; esac
-      if [ -z "$err" ]; then echo "closed cmux $ref"
-      else echo "finish: could not close cmux $ref: $err (row is finished; re-run finish to retry)" >&2; rc=1; fi
+      err=$(_term_close "$b" "$ref") && err=
+      if [ -z "$err" ]; then echo "closed $b $ref"
+      else echo "finish: could not close $b $ref: $err (row is finished; re-run finish to retry)" >&2; rc=1; fi
     fi
     _close_browsers "${rd:--}" "$role" "$titles"
+  elif [ "$b" = cmux ] || [ "$b" = arcaterm ]; then
+    echo "finish: $title's pane was opened in $b, which this $be pane cannot close (row is finished; re-run finish from $b, or close the pane by hand)" >&2; rc=1
   fi
   if declare -F sub_sync >/dev/null; then sub_sync "$team" || true; fi
   exit "$rc"
@@ -724,7 +811,8 @@ fi
 if [ "$sub" = show ] || [ "$sub" = list ]; then
   team=${1:?team}; reg=$(_reg "$team")
   _need_py
-  _require_cmux ws
+  _require_term ws
+  be=$(_backend)
   [ -f "$reg" ] || { echo "no teammates recorded for $team"; exit 3; }
   _lead=$(_lead_pane)
   leadpane=${_lead%% *}
@@ -734,14 +822,27 @@ if [ "$sub" = show ] || [ "$sub" = list ]; then
     # Teammates only (layout pane|tab): the dash monitor is not a teammate. MODEL_GONE: the
     # teammate's or its subagents' model left the picker, so its next call fails; respawn it.
     # States: working (<pane>) | tab (in your pane, running) | finished | dead | unknown.
+    # ArcaTerm: one snapshot serves every row; a pane whose claude session exited is dead too.
+    panes=; [ "$be" != arcaterm ] || panes=$(_at_panes) || panes=
     while IFS= read -r row; do
       read -r b ref lay name mdl smdl _ <<<"$row" || true
       [ -n "${ref:-}" ] || continue
       case ${lay:-} in pane|tab) ;; *) continue ;; esac
       gone=""
       if _model_gone "${mdl:-}" || _model_gone "${smdl:-}"; then gone="  MODEL_GONE"; fi
-      if [ "$b" != cmux ]; then st="unknown ($b $ref)"
-      elif _finished "$row"; then st=finished
+      if _finished "$row"; then st=finished
+      elif [ "$b" = arcaterm ] && [ "$be" = arcaterm ]; then
+        line=$(_at_line "$ref" "$panes")
+        if [ -z "$panes" ]; then st="unknown (ArcaTerm gave no pane list)"
+        elif [ -z "$line" ]; then st=dead
+        else
+          case $(cut -f5 <<<"$line") in
+            stopped) st="dead (its claude session exited; the pane is still open)" ;;
+            unavailable) st="unknown (ArcaTerm cannot observe its pane $ref)" ;;
+            *) st="working ($ref)" ;;
+          esac
+        fi
+      elif [ "$b" != cmux ] || [ "$be" != cmux ]; then st="unknown ($b $ref)"
       elif ! _alive "$b" "$ref"; then st=dead   # only a definite "not found" counts as dead
       else
         pp=$(_pane_of "$ref")
@@ -757,10 +858,17 @@ if [ "$sub" = show ] || [ "$sub" = list ]; then
   fi
 
   role=${2:?role}; title="$team-$role"
-  row=$(awk -v t="$title" '$1=="cmux" && ($3=="pane" || $3=="tab") && $4==t {r=$0} END{print r}' "$reg")
+  row=$(awk -v t="$title" -v b="$be" '$1==b && ($3=="pane" || $3=="tab") && $4==t {r=$0} END{print r}' "$reg")
   ref=$(awk '{print $2}' <<<"$row")
   [ -n "$ref" ] || { echo "no recorded pane for $title (not spawned)"; exit 3; }
   if _finished "$row"; then echo "$title is finished (no pane); spawn it again to give it more work"; exit 3; fi
+  if [ "$be" = arcaterm ]; then
+    # ArcaTerm has no tabs inside panes, so nothing is moved: focusing the pane selects its tab too.
+    _alive arcaterm "$ref" || { echo "$title is gone; respawn it"; exit 3; }
+    _at_focus "$ref" || { echo "show: ArcaTerm could not focus $title's pane ($ref); pane focus works only on the Mac. Open its tab by hand" >&2; exit 1; }
+    echo "showing $title ($ref, focused)"
+    exit 0
+  fi
   _alive cmux "$ref" || { echo "$title is gone; respawn it"; exit 3; }
   cur=$(_pane_of "$ref")
   # Alive but unresolved: cmux is failing, not the teammate. Never suggest a respawn (or --replace) here.
@@ -788,7 +896,7 @@ fi
 layout=pane worktree= caveman=1 replace= resume=
 while :; do case ${1:-} in
   --resume) resume=1; shift ;;
-  --tmux) echo "--tmux was removed in rev4: /team is cmux-only (run it from a cmux pane)" >&2; exit 2 ;;
+  --tmux) echo "--tmux was removed in rev4: /team runs in cmux or ArcaTerm (run it from one of their panes)" >&2; exit 2 ;;
   --tabs) layout=tab; shift ;; --worktree) worktree=1; shift ;;
   --replace) replace=1; shift ;; --no-caveman) caveman=; shift ;; *) break ;;
 esac; done
@@ -808,7 +916,8 @@ esac
 [ -f "$pfile" ] && [ -r "$pfile" ] || { echo "prompt file not readable: $pfile" >&2; exit 2; }
 pfile="$(cd "$(dirname "$pfile")" && pwd)/$(basename "$pfile")"
 _need_py
-_require_cmux ws
+_require_term ws
+be=$(_backend)
 
 # A wrong model does not fail the spawn: claude exits 0, the pane opens, and the
 # session is dead on arrival -- easy to miss entirely once the teammate is out of sight
@@ -859,10 +968,11 @@ if [ "$tier" = haiku ]; then
   allow+=",Bash(bash ~/.claude/skills/team/team.sh facts-lint:*),Bash(bash $here/team.sh facts-lint:*)"
   # Only `git status`: diff/log/show take --output=<file> (writes, live-probed); read code with Read/Grep/Glob.
   allow+=",Bash(git status:*)"
-  # teammate-rules.md has every teammate `cmux notify --title ... --body ...` when it reports or needs
-  # input (ring + badge; the command writes no files). The prefix starts at --title so a bare
+  # teammate-rules.md has every cmux teammate `cmux notify --title ... --body ...` when it reports or
+  # needs input (ring + badge; the command writes no files). The prefix starts at --title so a bare
   # `--clear` or `--workspace`/`--surface` first is denied; a prefix rule cannot forbid later flags.
-  allow+=",Bash(cmux notify --title:*)"
+  # ArcaTerm raises its own attention from the agent's state, so its teammates get no notify rule.
+  [ "$be" != cmux ] || allow+=",Bash(cmux notify --title:*)"
   pmode=dontAsk
   echo "note: $title is haiku-tier (${model:-$dmodel}): --permission-mode dontAsk + read-only allowlist" >&2
 else
@@ -902,7 +1012,7 @@ live=$(awk -v t="$title" '$4==t && $9!="finished" {print $1" "$2}' "$reg" 2>/dev
 if [ -n "$live" ]; then
   [ -n "$replace" ] || { echo "$title is already live ($(echo $live)); pass --replace to close it and respawn" >&2; exit 2; }
   while read -r b r; do
-    [ "$b" != cmux ] || cmux close-surface --surface "$r" --force >/dev/null 2>&1 || true
+    [ "$b" != "$be" ] || _term_close "$b" "$r" >/dev/null 2>&1 || true
     echo "replaced: closed $b $r ($title)"
   done <<<"$live"
   awk -v t="$title" '$4!=t || $9=="finished"' "$reg" > "$reg.tmp" && mv "$reg.tmp" "$reg"
@@ -956,7 +1066,12 @@ rulesfile="$here/teammate-rules.md"
 # subagents, verify what they return) plus the caveman style unless --no-caveman.
 sysprompt="$(_reg_dir)/team-$team-$role.sysprompt.md"
 : > "$sysprompt"
-if [ -f "$rulesfile" ]; then cat "$rulesfile" >> "$sysprompt"; fi
+# teammate-rules.md fences terminal-specific bullets in <!-- cmux-only --> / <!-- arcaterm-only --> blocks:
+# a teammate gets only its own terminal's blocks (fence lines dropped), so it is never told to run a CLI it lacks.
+drop=arcaterm; [ "$be" != arcaterm ] || drop=cmux
+if [ -f "$rulesfile" ]; then
+  sed -e "/^<!-- $drop-only -->\$/,/^<!-- \/$drop-only -->\$/d" -e '/^<!-- \/\{0,1\}[a-z]*-only -->$/d' "$rulesfile" >> "$sysprompt"
+fi
 if [ -n "$caveman" ] && [ -f "$cavefile" ]; then printf '\n\n' >> "$sysprompt"; cat "$cavefile" >> "$sysprompt"; fi
 envs="CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=4 TEAM_MEMBER=$(printf %q "$title")"
 [ "$submodel" != - ] && envs+=" CLAUDE_CODE_SUBAGENT_MODEL=$(printf %q "$submodel")"
@@ -976,6 +1091,28 @@ fi
 if [ -z "$resume" ] && [ -s "$sysprompt" ]; then cmd+=" --append-system-prompt-file $(printf %q "$sysprompt")"; fi
 [ -n "$model" ] && cmd+=" --model $(printf %q "$model")"
 cmd+=" \"\$(cat $(printf %q "$pfile"))\""
+
+if [ "$be" = arcaterm ]; then
+  # Same two-column grid as cmux below, anchored on pane UUIDs. ArcaTerm types --run into the new
+  # pane's shell, so the shell gets a short `bash <launcher>` instead of the whole command.
+  launcher="$(_reg_dir)/team-$team-$role.launch.sh"
+  _at_launcher "$launcher" "$title" "$cmd"
+  if [ "$layout" = pane ]; then
+    n=$(awk '$1=="arcaterm" && $3=="pane" && $9!="finished"{c++} END{print c+0}' "$reg" 2>/dev/null || echo 0)
+    if [ "$n" -eq 0 ]; then opened=$(_at_open split - right "$launcher")
+    elif [ "$n" -eq 1 ]; then opened=$(_at_open split "$(awk '$1=="arcaterm" && $3=="pane" && $9!="finished"{print $2; exit}' "$reg")" right "$launcher")
+    else opened=$(_at_open split "$(awk '$1=="arcaterm" && $3=="pane" && $9!="finished"{print $2}' "$reg" | sed -n "$((n-1))p")" down "$launcher"); fi
+  else
+    opened=$(_at_open tab - - "$launcher")
+  fi || { echo "spawn: ArcaTerm did not open a pane for $title" >&2; exit 1; }
+  ref=${opened%% *}
+  [ "$layout" != tab ] || _at_rename_tab "$title" "${opened#* }" || true
+  awk -v t="$title" '$4!=t' "$reg" > "$reg.tmp" && mv "$reg.tmp" "$reg"
+  _reg_add "$team" "$ref" "$layout" "$title" "${model:--}" "$submodel" "$rundir" "$sid" "$dir"
+  where="in the lead's tab"; [ "$layout" != tab ] || where="in a child tab of the lead's tab"
+  echo "arcaterm $layout $ref ($team-$role) $where"
+  exit 0
+fi
 
 if [ "$layout" = pane ]; then
   # Two-column grid in the region right of the lead: #1 opens it, #2 sits beside
