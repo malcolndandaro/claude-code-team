@@ -142,9 +142,11 @@ On a new machine the shared library starts empty until you sync it.
                         grid on the right; finished ones close.
                         Pane modes need cmux or ArcaTerm. Install: https://cmux.dev
     cmux + --tabs       A new tab per teammate in the current workspace
-    In ArcaTerm         The same two-column split of your tab, titled <team>-<role>.
-                        ArcaTerm moves focus to a new split; the lead takes it back.
-    ArcaTerm + --tabs   A child tab of your tab per teammate
+    In ArcaTerm         The same two-column split of your tab. ArcaTerm titles split
+                        panes itself (process or agent), not <team>-<role>: tell them
+                        apart in the status pane or `team.sh list`. ArcaTerm moves focus
+                        to a new split; the lead takes it back.
+    ArcaTerm + --tabs   A child tab of your tab per teammate, titled <team>-<role>
     --inline            No panes: teammates run as subagents inside your session.
                         Works without cmux or ArcaTerm.
   The terminal is the one you run /team from: a cmux pane uses cmux, an ArcaTerm pane

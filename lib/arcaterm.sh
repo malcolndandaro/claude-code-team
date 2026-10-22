@@ -20,8 +20,12 @@
 #     needs-input (a question OR a tool-approval prompt), idle, unread (idle with unseen output),
 #     checking, unavailable (status could not be observed), stopped (the agent session is absent:
 #     claude exited and left a shell).
-#   - A pane's title follows the terminal title (OSC 0), which the launcher sets before claude starts
-#     (claude's own title updates are off for teammates). `tab rename` sets a tab's own title.
+#   - ArcaTerm titles a pane itself, from its foreground process or the agent it recognises: an OSC 0
+#     title written inside the pane does not hold (probed: neither from the shell nor seconds later
+#     from a child). So split teammates are not titled <team>-<role>; `tab rename` does title a tab,
+#     which --tabs uses. Teammates are told apart by `team.sh list` / the monitor (pane ids).
+#   - A teammate started as plain `claude` is recognised as an agent once its session starts: the
+#     snapshot then carries the exact session id team.sh passed with --session-id.
 #   - `pane focus` works only on the Mac; from a remote host it fails, and callers say so.
 
 _at_min=1.15.0
@@ -73,12 +77,11 @@ _at_self() {
 # The _at_panes line of pane $1 in panes output $2 (empty when it is not there).
 _at_line() { awk -F'\t' -v x="$1" '$1==x {print; exit}' <<<"$2"; }
 
-# Write <file>: set the pane title to <title>, then run <command> (bash syntax, already quoted).
+# Write <file> to run <command> (bash syntax, already quoted) for <title>.
 _at_launcher() {
   local f=$1 title=$2 cmd=$3
   { printf '#!/usr/bin/env bash\n'
-    printf '# Written by team.sh: ArcaTerm types `bash <this file>` into the pane, not the command itself.\n'
-    printf "printf '\\\\033]0;%%s\\\\007' %q\n" "$title"
+    printf '# %s, written by team.sh: ArcaTerm types `bash <this file>` into the pane, not the command itself.\n' "$title"
     printf '%s\n' "$cmd"
   } > "$f"
 }

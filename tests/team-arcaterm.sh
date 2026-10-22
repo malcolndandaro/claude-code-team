@@ -176,7 +176,7 @@ _row() { awk -v t="$2" '$4==t' "$TEAM_REG_DIR/team-$1.tabs" 2>/dev/null || true;
   [ ! -s "$CMUX_LOG" ] && pass "A1: no cmux call in an ArcaTerm pane" || fail "A1: no cmux call in an ArcaTerm pane" "$(cat "$CMUX_LOG")"
 }
 
-# ═══ A2 — the launcher: short --run, title escape, the full claude command; running it starts claude ═══
+# ═══ A2 — the launcher: short --run, the full claude command; running it starts claude; close removes it ═══
 {
   _at_reset; R="$W/a2"; _mkproj "$R" sec
   _spawn "$R" a2 sec "$R/run/prompts/sec.md" "$SONNET" >/dev/null || true
@@ -184,14 +184,15 @@ _row() { awk -v t="$2" '$4==t' "$TEAM_REG_DIR/team-$1.tabs" 2>/dev/null || true;
   sid=$(_row a2 a2-sec | awk '{print $10}')
   grep -q -- "--run bash $L\$" "$AT_LOG" \
     && pass "A2: ArcaTerm is told to type only 'bash <launcher>'" || fail "A2: ArcaTerm is told to type only 'bash <launcher>'" "$(cat "$AT_LOG")"
-  grep -qF "printf '\\033]0;%s\\007' a2-sec" "$L" && grep -q "CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1" "$L" \
-    && grep -q "claude --session-id $sid --name a2-sec" "$L" \
-    && pass "A2: launcher sets the pane title, keeps claude's title updates off, and starts the recorded session" \
-    || fail "A2: launcher sets the pane title, keeps claude's title updates off, and starts the recorded session" "$(cat "$L" 2>/dev/null)"
-  out=$(bash "$L" 2>/dev/null | od -c | head -1) || true
-  [[ $out == *"033   ]   0   ;   a   2   -   s   e   c"* ]] && grep -q -- "--name a2-sec" "$CLAUDE_LOG" && grep -q "do the sec work" "$CLAUDE_LOG" \
-    && pass "A2: running the launcher emits the title escape, then claude with the prompt" \
-    || fail "A2: running the launcher emits the title escape, then claude with the prompt" "out=$out claude=$(cat "$CLAUDE_LOG")"
+  grep -q "CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1" "$L" 2>/dev/null && grep -q "claude --session-id $sid --name a2-sec" "$L" \
+    && pass "A2: launcher keeps claude's title updates off and starts the recorded session" \
+    || fail "A2: launcher keeps claude's title updates off and starts the recorded session" "$(cat "$L" 2>/dev/null)"
+  bash "$L" >/dev/null 2>&1 || true
+  grep -q -- "--name a2-sec" "$CLAUDE_LOG" && grep -q "do the sec work" "$CLAUDE_LOG" \
+    && pass "A2: running the launcher starts claude with the prompt" \
+    || fail "A2: running the launcher starts claude with the prompt" "claude=$(cat "$CLAUDE_LOG")"
+  (cd "$R" && bash "$TEAM_SH" close a2 >/dev/null 2>&1) || true
+  [ ! -e "$L" ] && pass "A2: close removes the launcher" || fail "A2: close removes the launcher" "$L still there"
 }
 
 # ═══ A3 — --tabs: a child tab that keeps focus where it was, renamed to the teammate's title ═══

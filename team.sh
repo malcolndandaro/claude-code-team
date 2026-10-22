@@ -90,7 +90,8 @@
 # title unless --replace (which closes the old one first), and refuses a 9th live teammate (exit 4).
 # A finished row with the same title is superseded by the new session and dropped. The monitor
 # pane (layout dash) does not count toward the 8.
-# Every pane/tab is titled <team>-<role> (Claude's own terminal-title updates are disabled so it sticks),
+# Every pane/tab is titled <team>-<role> (Claude's own terminal-title updates are disabled so it sticks;
+# ArcaTerm: tabs only, see Layout),
 # and the session is started as `claude --session-id <uuid> --name <team>-<role>` with TEAM_MEMBER=<team>-<role>
 # in its env; the uuid is generated per spawn and recorded in the registry row.
 # Every teammate gets teammate-rules.md appended to its system prompt (parallelise with
@@ -103,7 +104,8 @@
 # --tabs: one tab per teammate in the lead's workspace (ArcaTerm: a child tab of the lead's tab) instead.
 # --tmux was removed (cmux or ArcaTerm only): exit 2.
 # ArcaTerm types the launch command into the new pane's shell, so spawn writes it to
-# $TEAM_REG_DIR/team-<team>-<role>.launch.sh (it also sets the pane title) and types only `bash <that file>`.
+# $TEAM_REG_DIR/team-<team>-<role>.launch.sh and types only `bash <that file>`; close and reap remove it.
+# ArcaTerm titles a split pane itself (its process or agent), so only a --tabs teammate carries <team>-<role>.
 # Permission mode: a haiku-tier model (by resolved tier, so any id that behaves as haiku) always
 # gets --permission-mode dontAsk plus a per-teammate allowlist: Read/Glob/Grep, SendMessage,
 # `git status` (diff/log/show can write via --output), ls/wc, `team.sh facts-lint`, `cmux notify --title ...` (cmux only), and Edit on exactly its
@@ -571,7 +573,7 @@ if [ "$sub" = reap ]; then
       note=; case $run in "$today"-*) note=" (run started today: may be live in another lead session)" ;; esac
       if [ -z "$yes" ]; then echo "$t  $title  $b $r  run $run$note"; keep+="$row"$'\n'; held=1; continue; fi
       err=$(_term_close "$b" "$r") && err=
-      if [ -z "$err" ]; then echo "$t  $title  $b $r  closed"; rm -f "$dir/team-$t-${title#"$t"-}.round"
+      if [ -z "$err" ]; then echo "$t  $title  $b $r  closed"; rm -f "$dir/team-$t-${title#"$t"-}.round" "$dir/team-$t-${title#"$t"-}.launch.sh"
         _close_browsers "${rd:--}" "${title#"$t"-}" "$titles"
       else echo "$t  $title  $b $r  could not close: $err" >&2; keep+="$row"$'\n'; held=1; failed=1; fi
     done < "$reg"
@@ -625,7 +627,7 @@ if [ "$sub" = close ]; then
   while IFS= read -r row; do
     read -r backend id _ title _ _ rd _ <<<"$row" || true
     [ -n "${id:-}" ] || continue
-    rm -f "$(_reg_dir)/team-$team-${title#"$team"-}.round"
+    rm -f "$(_reg_dir)/team-$team-${title#"$team"-}.round" "$(_reg_dir)/team-$team-${title#"$team"-}.launch.sh"
     _close_browsers "${rd:--}" "${title#"$team"-}" "$titles"
     if _finished "$row"; then echo "dropped finished $title (no pane)"; continue; fi
     case $backend in
@@ -1107,7 +1109,7 @@ if [ "$be" = arcaterm ]; then
   fi || { echo "spawn: ArcaTerm did not open a pane for $title" >&2; exit 1; }
   ref=${opened%% *}
   [ "$layout" != tab ] || _at_rename_tab "$title" "${opened#* }" || true
-  awk -v t="$title" '$4!=t' "$reg" > "$reg.tmp" && mv "$reg.tmp" "$reg"
+  [ ! -f "$reg" ] || { awk -v t="$title" '$4!=t' "$reg" > "$reg.tmp" && mv "$reg.tmp" "$reg"; }
   _reg_add "$team" "$ref" "$layout" "$title" "${model:--}" "$submodel" "$rundir" "$sid" "$dir"
   where="in the lead's tab"; [ "$layout" != tab ] || where="in a child tab of the lead's tab"
   echo "arcaterm $layout $ref ($team-$role) $where"
@@ -1133,7 +1135,7 @@ fi
 ref=$(awk '{print $2}' <<<"$out")   # "OK surface:N ..."
 cmux rename-tab --surface "$ref" "$title" >/dev/null
 # The new session supersedes any finished row of this title; dropped only now, so a spawn that
-# failed above still leaves the old session id to resume.
-awk -v t="$title" '$4!=t' "$reg" > "$reg.tmp" && mv "$reg.tmp" "$reg"
+# failed above still leaves the old session id to resume. A team's first spawn has no registry yet.
+[ ! -f "$reg" ] || { awk -v t="$title" '$4!=t' "$reg" > "$reg.tmp" && mv "$reg.tmp" "$reg"; }
 _reg_add "$team" "$ref" "$layout" "$title" "${model:--}" "$submodel" "$rundir" "$sid" "$dir"
 echo "cmux $layout $ref ($team-$role) in current workspace"
