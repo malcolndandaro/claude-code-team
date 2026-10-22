@@ -47,7 +47,7 @@ _tk_detect() {
   fi
   if [ -z "$mode" ]; then
     if compgen -G "$root/.scratch/*/issues" >/dev/null; then mode=local
-    elif gh auth status >/dev/null 2>&1 && git -C "$root" remote -v 2>/dev/null | grep -q 'github\.com'; then mode=github
+    elif gh auth status >/dev/null 2>&1 && grep -q 'github\.com' <<<"$(git -C "$root" remote -v 2>/dev/null)"; then mode=github
     else echo "tickets: no tracker found; run /setup-matt-pocock-skills, then /to-spec and /to-tickets" >&2; return 3; fi
   fi
   [ "$mode" = local ] || { echo "github -"; return 0; }
@@ -206,7 +206,9 @@ sub_integrate() {
     echo "integrate: refused: the main checkout has uncommitted changes outside .scratch/:" >&2
     git -C "$root" status --short -- . ':(exclude).scratch' | head -5 >&2; return 2; }
   [ -z "$(git -C "$wt" status --porcelain)" ] || { echo "integrate: refused: worktree $wt has uncommitted changes" >&2; return 2; }
-  git -C "$root" log --format=%s "$branch..$tb" 2>/dev/null | grep -q "^Slice 0*${sid#0}:" || {
+  # Captured, not piped: under pipefail, `grep -q` exiting early can kill git log with SIGPIPE.
+  local subjects; subjects=$(git -C "$root" log --format=%s "$branch..$tb" 2>/dev/null || true)
+  grep -q "^Slice 0*${sid#0}:" <<<"$subjects" || {
     echo "integrate: refused: $tb has no 'Slice $sid:' commit on top of $branch" >&2; return 2; }
   [ -z "$(git -C "$root" diff --name-only "$(git -C "$root" merge-base "$branch" "$tb")" "$tb" -- .scratch)" ] || {
     echo "integrate: refused: $tb changes .scratch/; the lead owns tracker files (revert them on the branch)" >&2; return 2; }
