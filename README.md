@@ -27,7 +27,14 @@ It emulates Claude Code's experimental [agent teams](https://code.claude.com/doc
 ## Install
 
 ```bash
-git clone https://github.com/allexlima/claude-code-team ~/.claude/skills/team
+git clone https://github.com/malcolndandaro/claude-code-team ~/.claude/skills/team
+```
+
+Or keep the clone elsewhere and link it: the skill expects to live at `~/.claude/skills/team`.
+
+```bash
+git clone https://github.com/malcolndandaro/claude-code-team ~/claude-code-team
+ln -s ../../claude-code-team ~/.claude/skills/team
 ```
 
 That's it — start (or restart) Claude Code and run `/team --help`.
